@@ -8,8 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import com.pictureperfectx.app.ui.PermissionGate
-import com.pictureperfectx.app.ui.camera.CameraScreen
+import com.pictureperfectx.app.ui.PicturePerfectRoot
 import com.pictureperfectx.app.ui.theme.PicturePerfectTheme
 
 class MainActivity : ComponentActivity() {
@@ -19,9 +18,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             PicturePerfectTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    PermissionGate {
-                        CameraScreen()
-                    }
+                    PicturePerfectRoot()
                 }
             }
         }

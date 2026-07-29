@@ -63,6 +63,28 @@ Fully native Kotlin. No cross-platform runtime.
 - **0-100 intensity slider** (`ui/components/IntensitySlider.kt`) drives
   `GPUImageLookupFilter.setIntensity` live on both the preview and the capture
   pipeline; it's hidden for **Original**.
+- **Live per-thumbnail previews** — the carousel shows each look applied to the
+  *current scene*, not an abstract chip. `CameraController` publishes a small,
+  throttled snapshot of the live frame; `filter/LutThumbnails.kt` applies each
+  LUT to it on the CPU (background thread, decoded-LUT LRU cache) so the strip
+  stays fast even across 100 looks. Falls back to the swatch gradient until the
+  first frame arrives.
+
+### In-app gallery (`ui/gallery/`)
+
+- A 3-column grid of every capture, read from the local **Room** index; tap the
+  library button (bottom-left of the camera) to open it, tap a photo for a
+  full-screen viewer with delete.
+- Images load from their **MediaStore** content URIs via Coil. Deleting removes
+  both the Room row and the MediaStore file.
+
+### Everything is on-device — zero server cost
+
+The app declares **no `INTERNET` permission** and has no backend. Filtering runs
+on the GPU (GPUImage), thumbnail previews are computed on the CPU, photos are
+written to the device's shared storage (MediaStore), and their index lives in a
+local SQLite database (Room). Nothing is uploaded, so there is nothing to host
+and no per-user server bill.
 
 ### Extras added beyond the four steps
 
@@ -70,7 +92,7 @@ Fully native Kotlin. No cross-platform runtime.
 - **Front/back lens switch** and **flash mode cycle** (off → on → auto).
 - **Last-photo thumbnail** in the control bar.
 - **Room "schema"** indexing every capture (uri, filter, lens, dimensions,
-  timestamp) so a gallery screen can be added without touching the camera code.
+  timestamp) — backs the in-app gallery.
 - **Unit tests** validating the LUT pack and a **GitHub Actions** workflow that
   builds the APK and runs tests.
 

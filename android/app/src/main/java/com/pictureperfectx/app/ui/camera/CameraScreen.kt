@@ -32,10 +32,12 @@ import com.pictureperfectx.app.ui.components.IntensitySlider
  */
 @Composable
 fun CameraScreen(
+    onOpenGallery: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: CameraViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val previewSnapshot by viewModel.controller.previewSnapshot.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -87,6 +89,7 @@ fun CameraScreen(
                 FilterCarousel(
                     filters = state.filters,
                     selectedFilterId = state.selectedFilterId,
+                    previewSource = previewSnapshot,
                     onFilterSelected = viewModel::onFilterSelected,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -95,6 +98,7 @@ fun CameraScreen(
                     lastSavedThumbUri = state.lastSavedThumbUri,
                     onCapture = viewModel::onCapture,
                     onToggleLens = viewModel::onToggleLens,
+                    onOpenGallery = onOpenGallery,
                 )
             }
         }

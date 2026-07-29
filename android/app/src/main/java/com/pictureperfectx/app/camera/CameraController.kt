@@ -3,7 +3,10 @@ package com.pictureperfectx.app.camera
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
 import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.opengl.GLSurfaceView
 import android.util.Log
 import androidx.camera.core.CameraSelector
@@ -19,7 +22,12 @@ import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageLookupFilter
 import jp.co.cyberagent.android.gpuimage.util.Rotation
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import kotlin.math.max
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Owns the CameraX <-> GPUImage bridge.
@@ -56,6 +64,14 @@ class CameraController(context: Context) {
     private var intensity: Float = 1f
     private var previewLookup: GPUImageLookupFilter? = null
     private var captureLookup: GPUImageLookupFilter? = null
+
+    // A small, upright snapshot of the live scene, refreshed a few times a second, used as the
+    // source for the per-thumbnail LUT previews. All on-device; nothing leaves the phone.
+    private val _previewSnapshot = MutableStateFlow<Bitmap?>(null)
+    val previewSnapshot: StateFlow<Bitmap?> = _previewSnapshot.asStateFlow()
+    private var lastSnapshotMs = 0L
+    private val snapshotIntervalMs = 900L
+    private val snapshotLongEdge = 160
 
     init {
         previewGpuImage.setScaleType(GPUImage.ScaleType.CENTER_CROP)
@@ -106,10 +122,36 @@ class CameraController(context: Context) {
         try {
             val nv21 = image.toNv21()
             previewGpuImage.updatePreviewFrame(nv21, image.width, image.height)
+            maybeSnapshot(nv21, image.width, image.height)
         } catch (e: Exception) {
             Log.e(TAG, "Frame conversion failed", e)
         } finally {
             image.close()
+        }
+    }
+
+    /** Throttled: turn the current NV21 frame into a small upright bitmap for thumbnail previews. */
+    private fun maybeSnapshot(nv21: ByteArray, width: Int, height: Int) {
+        val now = System.currentTimeMillis()
+        if (now - lastSnapshotMs < snapshotIntervalMs) return
+        lastSnapshotMs = now
+        try {
+            val jpeg = ByteArrayOutputStream().also {
+                YuvImage(nv21, ImageFormat.NV21, width, height, null)
+                    .compressToJpeg(Rect(0, 0, width, height), 70, it)
+            }.toByteArray()
+            val decoded = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return
+            val scale = snapshotLongEdge.toFloat() / max(width, height)
+            val m = Matrix().apply {
+                postScale(scale, scale)
+                postRotate(if (isFront()) 270f else 90f)
+                if (isFront()) postScale(-1f, 1f)
+            }
+            val small = Bitmap.createBitmap(decoded, 0, 0, width, height, m, true)
+            if (small != decoded) decoded.recycle()
+            _previewSnapshot.value = small
+        } catch (e: Exception) {
+            Log.w(TAG, "Snapshot failed", e)
         }
     }
 
