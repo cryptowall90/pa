@@ -1,0 +1,104 @@
+package com.pictureperfectx.app.ui.camera
+
+import android.app.Application
+import android.graphics.Bitmap
+import androidx.camera.core.CameraSelector
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.pictureperfectx.app.PicturePerfectApp
+import com.pictureperfectx.app.camera.CameraController
+import com.pictureperfectx.app.capture.PhotoSaver
+import com.pictureperfectx.app.data.PhotoEntity
+import com.pictureperfectx.app.filter.Filter
+import com.pictureperfectx.app.filter.FilterCatalog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class CameraViewModel(app: Application) : AndroidViewModel(app) {
+
+    val controller = CameraController(app)
+
+    private val repository = (app as PicturePerfectApp).photoRepository
+
+    private val _state = MutableStateFlow(CameraUiState())
+    val state: StateFlow<CameraUiState> = _state.asStateFlow()
+
+    private val _events = Channel<CameraEvent>(Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+
+    init {
+        controller.applyFilter(FilterCatalog.default)
+    }
+
+    fun onFilterSelected(filter: Filter) {
+        controller.applyFilter(filter)
+        _state.update { it.copy(selectedFilterId = filter.id) }
+    }
+
+    fun onToggleLens() {
+        controller.toggleLens()
+        _state.update { it.copy(isFrontFacing = controller.lensFacing == CameraSelector.LENS_FACING_FRONT) }
+    }
+
+    fun onCycleFlash() {
+        val mode = controller.cycleFlash()
+        _state.update { it.copy(flashMode = mode) }
+    }
+
+    fun onCapture() {
+        if (_state.value.isSaving) return
+        _state.update { it.copy(isSaving = true) }
+        controller.capture(
+            onResult = { bitmap, filter -> persist(bitmap, filter) },
+            onFailure = { throwable ->
+                _state.update { it.copy(isSaving = false) }
+                emit(CameraEvent.Error(throwable.message ?: "Capture failed"))
+            },
+        )
+    }
+
+    private fun persist(bitmap: Bitmap, filter: Filter) {
+        viewModelScope.launch {
+            try {
+                val saved = withContext(Dispatchers.IO) {
+                    val result = PhotoSaver.save(getApplication(), bitmap)
+                    repository.record(
+                        PhotoEntity(
+                            uri = result.uri.toString(),
+                            displayName = result.displayName,
+                            filterId = filter.id,
+                            filterName = filter.displayName,
+                            lensFacing = if (controller.lensFacing == CameraSelector.LENS_FACING_FRONT) "front" else "back",
+                            width = result.width,
+                            height = result.height,
+                        ),
+                    )
+                    result
+                }
+                _state.update { it.copy(isSaving = false, lastSavedThumbUri = saved.uri.toString()) }
+                emit(CameraEvent.Saved("Saved to Pictures/PicturePerfectX"))
+            } catch (e: Exception) {
+                _state.update { it.copy(isSaving = false) }
+                emit(CameraEvent.Error(e.message ?: "Couldn't save photo"))
+            } finally {
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
+    }
+
+    private fun emit(event: CameraEvent) {
+        viewModelScope.launch { _events.send(event) }
+    }
+
+    override fun onCleared() {
+        controller.release()
+        super.onCleared()
+    }
+}
