@@ -34,12 +34,23 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val events = _events.receiveAsFlow()
 
     init {
-        controller.applyFilter(FilterCatalog.default)
+        controller.applyFilter(FilterCatalog.original)
+        // Load the 100-LUT pack off the main thread, then publish it to the UI.
+        viewModelScope.launch {
+            val filters = withContext(Dispatchers.IO) { FilterCatalog.load(getApplication()) }
+            _state.update { it.copy(filters = filters) }
+        }
     }
 
     fun onFilterSelected(filter: Filter) {
         controller.applyFilter(filter)
+        controller.setIntensity(_state.value.intensity)
         _state.update { it.copy(selectedFilterId = filter.id) }
+    }
+
+    fun onIntensityChanged(percent: Int) {
+        controller.setIntensity(percent)
+        _state.update { it.copy(intensity = percent) }
     }
 
     fun onToggleLens() {

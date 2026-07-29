@@ -1,0 +1,806 @@
+{
+  "version": 1,
+  "count": 100,
+  "luts": [
+    {
+      "id": "fuji_provia",
+      "name": "Fuji Provia",
+      "category": "camera",
+      "asset": "luts/fuji_provia.png",
+      "swatchStart": "#FFDD9E7F",
+      "swatchEnd": "#FF3D4F72"
+    },
+    {
+      "id": "fuji_velvia",
+      "name": "Fuji Velvia",
+      "category": "camera",
+      "asset": "luts/fuji_velvia.png",
+      "swatchStart": "#FFFF9A6E",
+      "swatchEnd": "#FF354A80"
+    },
+    {
+      "id": "fuji_astia",
+      "name": "Fuji Astia",
+      "category": "camera",
+      "asset": "luts/fuji_astia.png",
+      "swatchStart": "#FFCE9D85",
+      "swatchEnd": "#FF46536E"
+    },
+    {
+      "id": "fuji_classic_chrome",
+      "name": "Classic Chrome",
+      "category": "camera",
+      "asset": "luts/fuji_classic_chrome.png",
+      "swatchStart": "#FFD2A692",
+      "swatchEnd": "#FF41506E"
+    },
+    {
+      "id": "fuji_pro_neg",
+      "name": "Fuji Pro Neg",
+      "category": "camera",
+      "asset": "luts/fuji_pro_neg.png",
+      "swatchStart": "#FFC89E89",
+      "swatchEnd": "#FF4E5A71"
+    },
+    {
+      "id": "fuji_eterna",
+      "name": "Fuji Eterna",
+      "category": "camera",
+      "asset": "luts/fuji_eterna.png",
+      "swatchStart": "#FFC1A293",
+      "swatchEnd": "#FF545F75"
+    },
+    {
+      "id": "fuji_acros",
+      "name": "Fuji Acros",
+      "category": "camera",
+      "asset": "luts/fuji_acros.png",
+      "swatchStart": "#FFADADAD",
+      "swatchEnd": "#FF454545"
+    },
+    {
+      "id": "canon_standard",
+      "name": "Canon Standard",
+      "category": "camera",
+      "asset": "luts/canon_standard.png",
+      "swatchStart": "#FFDD9E7F",
+      "swatchEnd": "#FF3F4F71"
+    },
+    {
+      "id": "canon_portrait",
+      "name": "Canon Portrait",
+      "category": "camera",
+      "asset": "luts/canon_portrait.png",
+      "swatchStart": "#FFD79E81",
+      "swatchEnd": "#FF46536F"
+    },
+    {
+      "id": "nikon_standard",
+      "name": "Nikon Standard",
+      "category": "camera",
+      "asset": "luts/nikon_standard.png",
+      "swatchStart": "#FFD8A084",
+      "swatchEnd": "#FF3C4E72"
+    },
+    {
+      "id": "nikon_vivid",
+      "name": "Nikon Vivid",
+      "category": "camera",
+      "asset": "luts/nikon_vivid.png",
+      "swatchStart": "#FFEC9D76",
+      "swatchEnd": "#FF344C7B"
+    },
+    {
+      "id": "sony_standard",
+      "name": "Sony Standard",
+      "category": "camera",
+      "asset": "luts/sony_standard.png",
+      "swatchStart": "#FFD29E85",
+      "swatchEnd": "#FF405172"
+    },
+    {
+      "id": "sony_deep",
+      "name": "Sony Deep",
+      "category": "camera",
+      "asset": "luts/sony_deep.png",
+      "swatchStart": "#FFE59F82",
+      "swatchEnd": "#FF384C7A"
+    },
+    {
+      "id": "leica_standard",
+      "name": "Leica Standard",
+      "category": "camera",
+      "asset": "luts/leica_standard.png",
+      "swatchStart": "#FFDC9F81",
+      "swatchEnd": "#FF36486C"
+    },
+    {
+      "id": "leica_classic",
+      "name": "Leica Classic",
+      "category": "camera",
+      "asset": "luts/leica_classic.png",
+      "swatchStart": "#FFD7A58B",
+      "swatchEnd": "#FF42506C"
+    },
+    {
+      "id": "leica_monochrom",
+      "name": "Leica Monochrom",
+      "category": "camera",
+      "asset": "luts/leica_monochrom.png",
+      "swatchStart": "#FFACACAC",
+      "swatchEnd": "#FF3E3E3E"
+    },
+    {
+      "id": "hasselblad_natural",
+      "name": "Hasselblad Natural",
+      "category": "camera",
+      "asset": "luts/hasselblad_natural.png",
+      "swatchStart": "#FFD6A186",
+      "swatchEnd": "#FF435271"
+    },
+    {
+      "id": "ricoh_positive",
+      "name": "Ricoh Positive",
+      "category": "camera",
+      "asset": "luts/ricoh_positive.png",
+      "swatchStart": "#FFE59F7C",
+      "swatchEnd": "#FF394C73"
+    },
+    {
+      "id": "olympus_om",
+      "name": "Olympus OM",
+      "category": "camera",
+      "asset": "luts/olympus_om.png",
+      "swatchStart": "#FFDD9F7F",
+      "swatchEnd": "#FF3F4F70"
+    },
+    {
+      "id": "panasonic_lumix",
+      "name": "Lumix Natural",
+      "category": "camera",
+      "asset": "luts/panasonic_lumix.png",
+      "swatchStart": "#FFD39F85",
+      "swatchEnd": "#FF415170"
+    },
+    {
+      "id": "pentax_bright",
+      "name": "Pentax Bright",
+      "category": "camera",
+      "asset": "luts/pentax_bright.png",
+      "swatchStart": "#FFE59D79",
+      "swatchEnd": "#FF3B4E74"
+    },
+    {
+      "id": "sigma_foveon",
+      "name": "Sigma Foveon",
+      "category": "camera",
+      "asset": "luts/sigma_foveon.png",
+      "swatchStart": "#FFE19F7F",
+      "swatchEnd": "#FF32456B"
+    },
+    {
+      "id": "arri_alexa",
+      "name": "Arri Alexa",
+      "category": "camera",
+      "asset": "luts/arri_alexa.png",
+      "swatchStart": "#FFC89F8C",
+      "swatchEnd": "#FF4E5B75"
+    },
+    {
+      "id": "red_komodo",
+      "name": "RED Komodo",
+      "category": "camera",
+      "asset": "luts/red_komodo.png",
+      "swatchStart": "#FFCE9E86",
+      "swatchEnd": "#FF465676"
+    },
+    {
+      "id": "blackmagic_film",
+      "name": "Blackmagic Film",
+      "category": "camera",
+      "asset": "luts/blackmagic_film.png",
+      "swatchStart": "#FFC39E8C",
+      "swatchEnd": "#FF545F76"
+    },
+    {
+      "id": "pixel_hdr",
+      "name": "Pixel HDR+",
+      "category": "camera",
+      "asset": "luts/pixel_hdr.png",
+      "swatchStart": "#FFECA37E",
+      "swatchEnd": "#FF374F7D"
+    },
+    {
+      "id": "summicron_35",
+      "name": "Summicron 35",
+      "category": "lens",
+      "asset": "luts/summicron_35.png",
+      "swatchStart": "#FFDF9F80",
+      "swatchEnd": "#FF34476D"
+    },
+    {
+      "id": "noctilux_50",
+      "name": "Noctilux 50",
+      "category": "lens",
+      "asset": "luts/noctilux_50.png",
+      "swatchStart": "#FFDDA486",
+      "swatchEnd": "#FF43526F"
+    },
+    {
+      "id": "summilux_50",
+      "name": "Summilux 50",
+      "category": "lens",
+      "asset": "luts/summilux_50.png",
+      "swatchStart": "#FFDEA183",
+      "swatchEnd": "#FF3B4C6E"
+    },
+    {
+      "id": "zeiss_planar",
+      "name": "Zeiss Planar",
+      "category": "lens",
+      "asset": "luts/zeiss_planar.png",
+      "swatchStart": "#FFDDA284",
+      "swatchEnd": "#FF384B71"
+    },
+    {
+      "id": "zeiss_sonnar",
+      "name": "Zeiss Sonnar",
+      "category": "lens",
+      "asset": "luts/zeiss_sonnar.png",
+      "swatchStart": "#FFE1A07F",
+      "swatchEnd": "#FF3C4D70"
+    },
+    {
+      "id": "zeiss_distagon",
+      "name": "Zeiss Distagon",
+      "category": "lens",
+      "asset": "luts/zeiss_distagon.png",
+      "swatchStart": "#FFDDA184",
+      "swatchEnd": "#FF3A4C70"
+    },
+    {
+      "id": "canon_l_85",
+      "name": "Canon L 85",
+      "category": "lens",
+      "asset": "luts/canon_l_85.png",
+      "swatchStart": "#FFDBA082",
+      "swatchEnd": "#FF42506E"
+    },
+    {
+      "id": "nikkor_105",
+      "name": "Nikkor 105",
+      "category": "lens",
+      "asset": "luts/nikkor_105.png",
+      "swatchStart": "#FFD8A084",
+      "swatchEnd": "#FF3C4E72"
+    },
+    {
+      "id": "helios_44",
+      "name": "Helios 44",
+      "category": "lens",
+      "asset": "luts/helios_44.png",
+      "swatchStart": "#FFE09D79",
+      "swatchEnd": "#FF3F5376"
+    },
+    {
+      "id": "voigtlander_nokton",
+      "name": "Voigtl\u00e4nder Nokton",
+      "category": "lens",
+      "asset": "luts/voigtlander_nokton.png",
+      "swatchStart": "#FFDCA285",
+      "swatchEnd": "#FF3C4C6D"
+    },
+    {
+      "id": "sigma_art",
+      "name": "Sigma Art",
+      "category": "lens",
+      "asset": "luts/sigma_art.png",
+      "swatchStart": "#FFE09F7F",
+      "swatchEnd": "#FF34476D"
+    },
+    {
+      "id": "petzval",
+      "name": "Petzval Swirl",
+      "category": "lens",
+      "asset": "luts/petzval.png",
+      "swatchStart": "#FFE69C77",
+      "swatchEnd": "#FF3B4F77"
+    },
+    {
+      "id": "lomo_lens",
+      "name": "Lomo Petzval",
+      "category": "lens",
+      "asset": "luts/lomo_lens.png",
+      "swatchStart": "#FFE59F7C",
+      "swatchEnd": "#FF3A4F78"
+    },
+    {
+      "id": "cooke_s4",
+      "name": "Cooke S4",
+      "category": "lens",
+      "asset": "luts/cooke_s4.png",
+      "swatchStart": "#FFD4A186",
+      "swatchEnd": "#FF4A5771"
+    },
+    {
+      "id": "angenieux",
+      "name": "Ang\u00e9nieux",
+      "category": "lens",
+      "asset": "luts/angenieux.png",
+      "swatchStart": "#FFD3A086",
+      "swatchEnd": "#FF475571"
+    },
+    {
+      "id": "trioplan",
+      "name": "Meyer Trioplan",
+      "category": "lens",
+      "asset": "luts/trioplan.png",
+      "swatchStart": "#FFDF9C7A",
+      "swatchEnd": "#FF3E5176"
+    },
+    {
+      "id": "minolta_rokkor",
+      "name": "Minolta Rokkor",
+      "category": "lens",
+      "asset": "luts/minolta_rokkor.png",
+      "swatchStart": "#FFDD9F80",
+      "swatchEnd": "#FF3F4F6F"
+    },
+    {
+      "id": "contax_zeiss",
+      "name": "Contax Zeiss",
+      "category": "lens",
+      "asset": "luts/contax_zeiss.png",
+      "swatchStart": "#FFE3A180",
+      "swatchEnd": "#FF394B6F"
+    },
+    {
+      "id": "takumar",
+      "name": "Takumar 50",
+      "category": "lens",
+      "asset": "luts/takumar.png",
+      "swatchStart": "#FFDEA080",
+      "swatchEnd": "#FF43506D"
+    },
+    {
+      "id": "jupiter_8",
+      "name": "Jupiter-8",
+      "category": "lens",
+      "asset": "luts/jupiter_8.png",
+      "swatchStart": "#FFD4A187",
+      "swatchEnd": "#FF495671"
+    },
+    {
+      "id": "nikkor_58_noct",
+      "name": "Nikkor 58 Noct",
+      "category": "lens",
+      "asset": "luts/nikkor_58_noct.png",
+      "swatchStart": "#FFDDA284",
+      "swatchEnd": "#FF3C4C6D"
+    },
+    {
+      "id": "leica_apo",
+      "name": "Leica APO",
+      "category": "lens",
+      "asset": "luts/leica_apo.png",
+      "swatchStart": "#FFE09F7F",
+      "swatchEnd": "#FF32456A"
+    },
+    {
+      "id": "fujinon_xf",
+      "name": "Fujinon XF",
+      "category": "lens",
+      "asset": "luts/fujinon_xf.png",
+      "swatchStart": "#FFDD9F81",
+      "swatchEnd": "#FF3D4E71"
+    },
+    {
+      "id": "laowa_macro",
+      "name": "Laowa Macro",
+      "category": "lens",
+      "asset": "luts/laowa_macro.png",
+      "swatchStart": "#FFE29E7C",
+      "swatchEnd": "#FF384D77"
+    },
+    {
+      "id": "kodak_portra_400",
+      "name": "Portra 400",
+      "category": "film",
+      "asset": "luts/kodak_portra_400.png",
+      "swatchStart": "#FFD3A086",
+      "swatchEnd": "#FF4D5972"
+    },
+    {
+      "id": "kodak_portra_800",
+      "name": "Portra 800",
+      "category": "film",
+      "asset": "luts/kodak_portra_800.png",
+      "swatchStart": "#FFD2A087",
+      "swatchEnd": "#FF4D5872"
+    },
+    {
+      "id": "kodak_gold_200",
+      "name": "Kodak Gold 200",
+      "category": "film",
+      "asset": "luts/kodak_gold_200.png",
+      "swatchStart": "#FFE1A07C",
+      "swatchEnd": "#FF46536E"
+    },
+    {
+      "id": "kodak_ektar_100",
+      "name": "Ektar 100",
+      "category": "film",
+      "asset": "luts/kodak_ektar_100.png",
+      "swatchStart": "#FFEA9E77",
+      "swatchEnd": "#FF374C77"
+    },
+    {
+      "id": "kodak_ektachrome",
+      "name": "Ektachrome",
+      "category": "film",
+      "asset": "luts/kodak_ektachrome.png",
+      "swatchStart": "#FFDD9F80",
+      "swatchEnd": "#FF394D76"
+    },
+    {
+      "id": "kodak_ultramax",
+      "name": "Kodak UltraMax",
+      "category": "film",
+      "asset": "luts/kodak_ultramax.png",
+      "swatchStart": "#FFDE9D7C",
+      "swatchEnd": "#FF415170"
+    },
+    {
+      "id": "kodak_tri_x",
+      "name": "Tri-X 400",
+      "category": "film",
+      "asset": "luts/kodak_tri_x.png",
+      "swatchStart": "#FFADADAD",
+      "swatchEnd": "#FF414141"
+    },
+    {
+      "id": "kodak_tmax",
+      "name": "T-Max 100",
+      "category": "film",
+      "asset": "luts/kodak_tmax.png",
+      "swatchStart": "#FFADADAD",
+      "swatchEnd": "#FF4A4A4A"
+    },
+    {
+      "id": "fuji_superia",
+      "name": "Fuji Superia",
+      "category": "film",
+      "asset": "luts/fuji_superia.png",
+      "swatchStart": "#FFD59E82",
+      "swatchEnd": "#FF3F5375"
+    },
+    {
+      "id": "fuji_pro_400h",
+      "name": "Pro 400H",
+      "category": "film",
+      "asset": "luts/fuji_pro_400h.png",
+      "swatchStart": "#FFC9A18C",
+      "swatchEnd": "#FF4C5B76"
+    },
+    {
+      "id": "fuji_c200",
+      "name": "Fuji C200",
+      "category": "film",
+      "asset": "luts/fuji_c200.png",
+      "swatchStart": "#FFD19E85",
+      "swatchEnd": "#FF415374"
+    },
+    {
+      "id": "cinestill_800t",
+      "name": "CineStill 800T",
+      "category": "film",
+      "asset": "luts/cinestill_800t.png",
+      "swatchStart": "#FFCDA08C",
+      "swatchEnd": "#FF445578"
+    },
+    {
+      "id": "cinestill_50d",
+      "name": "CineStill 50D",
+      "category": "film",
+      "asset": "luts/cinestill_50d.png",
+      "swatchStart": "#FFD89F81",
+      "swatchEnd": "#FF3F5071"
+    },
+    {
+      "id": "agfa_vista",
+      "name": "Agfa Vista",
+      "category": "film",
+      "asset": "luts/agfa_vista.png",
+      "swatchStart": "#FFE29E7C",
+      "swatchEnd": "#FF3F4F73"
+    },
+    {
+      "id": "agfa_apx",
+      "name": "Agfa APX",
+      "category": "film",
+      "asset": "luts/agfa_apx.png",
+      "swatchStart": "#FFB0B0B0",
+      "swatchEnd": "#FF4B4B4B"
+    },
+    {
+      "id": "ilford_hp5",
+      "name": "Ilford HP5",
+      "category": "film",
+      "asset": "luts/ilford_hp5.png",
+      "swatchStart": "#FFAEAEAE",
+      "swatchEnd": "#FF464646"
+    },
+    {
+      "id": "ilford_delta",
+      "name": "Ilford Delta",
+      "category": "film",
+      "asset": "luts/ilford_delta.png",
+      "swatchStart": "#FFAEAEAE",
+      "swatchEnd": "#FF4D4D4D"
+    },
+    {
+      "id": "lomography_400",
+      "name": "Lomography 400",
+      "category": "film",
+      "asset": "luts/lomography_400.png",
+      "swatchStart": "#FFEF9C72",
+      "swatchEnd": "#FF364F81"
+    },
+    {
+      "id": "polaroid_600",
+      "name": "Polaroid 600",
+      "category": "film",
+      "asset": "luts/polaroid_600.png",
+      "swatchStart": "#FFCCA38B",
+      "swatchEnd": "#FF586275"
+    },
+    {
+      "id": "polaroid_sx70",
+      "name": "Polaroid SX-70",
+      "category": "film",
+      "asset": "luts/polaroid_sx70.png",
+      "swatchStart": "#FFC4A08F",
+      "swatchEnd": "#FF586279"
+    },
+    {
+      "id": "instax",
+      "name": "Fuji Instax",
+      "category": "film",
+      "asset": "luts/instax.png",
+      "swatchStart": "#FFD0A087",
+      "swatchEnd": "#FF515D75"
+    },
+    {
+      "id": "provia_slide",
+      "name": "Provia Slide",
+      "category": "film",
+      "asset": "luts/provia_slide.png",
+      "swatchStart": "#FFE1A07F",
+      "swatchEnd": "#FF394C73"
+    },
+    {
+      "id": "velvia_50",
+      "name": "Velvia 50",
+      "category": "film",
+      "asset": "luts/velvia_50.png",
+      "swatchStart": "#FFFF9C68",
+      "swatchEnd": "#FF2F497E"
+    },
+    {
+      "id": "expired_film",
+      "name": "Expired Film",
+      "category": "film",
+      "asset": "luts/expired_film.png",
+      "swatchStart": "#FFCAA38E",
+      "swatchEnd": "#FF566070"
+    },
+    {
+      "id": "redscale",
+      "name": "Redscale",
+      "category": "film",
+      "asset": "luts/redscale.png",
+      "swatchStart": "#FFFF8C43",
+      "swatchEnd": "#FF5E4A40"
+    },
+    {
+      "id": "technicolor_2",
+      "name": "Technicolor",
+      "category": "film",
+      "asset": "luts/technicolor_2.png",
+      "swatchStart": "#FFFE9E7B",
+      "swatchEnd": "#FF38497C"
+    },
+    {
+      "id": "teal_orange",
+      "name": "Teal & Orange",
+      "category": "creative",
+      "asset": "luts/teal_orange.png",
+      "swatchStart": "#FFE3A383",
+      "swatchEnd": "#FF3E5379"
+    },
+    {
+      "id": "bleach_bypass",
+      "name": "Bleach Bypass",
+      "category": "creative",
+      "asset": "luts/bleach_bypass.png",
+      "swatchStart": "#FFD2AF9D",
+      "swatchEnd": "#FF3C475C"
+    },
+    {
+      "id": "day_for_night",
+      "name": "Day for Night",
+      "category": "creative",
+      "asset": "luts/day_for_night.png",
+      "swatchStart": "#FF9A8A98",
+      "swatchEnd": "#FF304171"
+    },
+    {
+      "id": "moody_blue",
+      "name": "Moody Blue",
+      "category": "creative",
+      "asset": "luts/moody_blue.png",
+      "swatchStart": "#FFC9A494",
+      "swatchEnd": "#FF425376"
+    },
+    {
+      "id": "golden_hour",
+      "name": "Golden Hour",
+      "category": "creative",
+      "asset": "luts/golden_hour.png",
+      "swatchStart": "#FFECA178",
+      "swatchEnd": "#FF48536C"
+    },
+    {
+      "id": "vintage_fade",
+      "name": "Vintage Fade",
+      "category": "creative",
+      "asset": "luts/vintage_fade.png",
+      "swatchStart": "#FFC9A28F",
+      "swatchEnd": "#FF555F73"
+    },
+    {
+      "id": "cross_process",
+      "name": "Cross Process",
+      "category": "creative",
+      "asset": "luts/cross_process.png",
+      "swatchStart": "#FFE8AE74",
+      "swatchEnd": "#FF385670"
+    },
+    {
+      "id": "noir",
+      "name": "Noir",
+      "category": "creative",
+      "asset": "luts/noir.png",
+      "swatchStart": "#FFAFAFAF",
+      "swatchEnd": "#FF353535"
+    },
+    {
+      "id": "sepia",
+      "name": "Sepia",
+      "category": "creative",
+      "asset": "luts/sepia.png",
+      "swatchStart": "#FFB8B3AD",
+      "swatchEnd": "#FF56524E"
+    },
+    {
+      "id": "infrared",
+      "name": "Infrared",
+      "category": "creative",
+      "asset": "luts/infrared.png",
+      "swatchStart": "#FFFA7B8C",
+      "swatchEnd": "#FF483A7D"
+    },
+    {
+      "id": "cyberpunk",
+      "name": "Cyberpunk",
+      "category": "creative",
+      "asset": "luts/cyberpunk.png",
+      "swatchStart": "#FFE0A389",
+      "swatchEnd": "#FF384E86"
+    },
+    {
+      "id": "pastel",
+      "name": "Pastel",
+      "category": "creative",
+      "asset": "luts/pastel.png",
+      "swatchStart": "#FFC8A18F",
+      "swatchEnd": "#FF525D74"
+    },
+    {
+      "id": "matte",
+      "name": "Matte",
+      "category": "creative",
+      "asset": "luts/matte.png",
+      "swatchStart": "#FFCCA18C",
+      "swatchEnd": "#FF4F5C76"
+    },
+    {
+      "id": "warm_film",
+      "name": "Warm Film",
+      "category": "creative",
+      "asset": "luts/warm_film.png",
+      "swatchStart": "#FFE0A280",
+      "swatchEnd": "#FF4A566F"
+    },
+    {
+      "id": "cold_winter",
+      "name": "Cold Winter",
+      "category": "creative",
+      "asset": "luts/cold_winter.png",
+      "swatchStart": "#FFC8A392",
+      "swatchEnd": "#FF3D4F73"
+    },
+    {
+      "id": "desert",
+      "name": "Desert",
+      "category": "creative",
+      "asset": "luts/desert.png",
+      "swatchStart": "#FFEE9E73",
+      "swatchEnd": "#FF465064"
+    },
+    {
+      "id": "forest",
+      "name": "Forest",
+      "category": "creative",
+      "asset": "luts/forest.png",
+      "swatchStart": "#FFD2A87F",
+      "swatchEnd": "#FF3C5772"
+    },
+    {
+      "id": "neon_nights",
+      "name": "Neon Nights",
+      "category": "creative",
+      "asset": "luts/neon_nights.png",
+      "swatchStart": "#FFEB9F84",
+      "swatchEnd": "#FF394C86"
+    },
+    {
+      "id": "vhs",
+      "name": "VHS",
+      "category": "creative",
+      "asset": "luts/vhs.png",
+      "swatchStart": "#FFD1A087",
+      "swatchEnd": "#FF4A5E80"
+    },
+    {
+      "id": "dreamy",
+      "name": "Dreamy",
+      "category": "creative",
+      "asset": "luts/dreamy.png",
+      "swatchStart": "#FFCDA28E",
+      "swatchEnd": "#FF525E78"
+    },
+    {
+      "id": "high_key",
+      "name": "High Key",
+      "category": "creative",
+      "asset": "luts/high_key.png",
+      "swatchStart": "#FFDBAF9A",
+      "swatchEnd": "#FF5E6B85"
+    },
+    {
+      "id": "low_key",
+      "name": "Low Key",
+      "category": "creative",
+      "asset": "luts/low_key.png",
+      "swatchStart": "#FFCC8766",
+      "swatchEnd": "#FF16284E"
+    },
+    {
+      "id": "mono_contrast",
+      "name": "Mono Contrast",
+      "category": "creative",
+      "asset": "luts/mono_contrast.png",
+      "swatchStart": "#FFADADAD",
+      "swatchEnd": "#FF2B2B2B"
+    },
+    {
+      "id": "faded_noir",
+      "name": "Faded Noir",
+      "category": "creative",
+      "asset": "luts/faded_noir.png",
+      "swatchStart": "#FFB1B1B1",
+      "swatchEnd": "#FF545454"
+    }
+  ]
+}
