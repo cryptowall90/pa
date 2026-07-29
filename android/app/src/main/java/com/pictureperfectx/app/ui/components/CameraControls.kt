@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -80,6 +81,7 @@ fun CameraControls(
     lastSavedThumbUri: String?,
     onCapture: () -> Unit,
     onToggleLens: () -> Unit,
+    onOpenGallery: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -87,7 +89,7 @@ fun CameraControls(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LastPhotoThumb(uri = lastSavedThumbUri)
+        LastPhotoThumb(uri = lastSavedThumbUri, onClick = onOpenGallery)
         ShutterButton(isSaving = isSaving, onClick = onCapture)
         CircleIconButton(
             icon = Icons.Filled.Cameraswitch,
@@ -124,22 +126,25 @@ private fun ShutterButton(isSaving: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LastPhotoThumb(uri: String?) {
+private fun LastPhotoThumb(uri: String?, onClick: () -> Unit) {
     Box(
         modifier = Modifier
             .size(52.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0x33000000))
-            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(12.dp)),
+            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (uri != null) {
             AsyncImage(
                 model = uri,
-                contentDescription = "Last photo",
+                contentDescription = "Open gallery",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)),
             )
+        } else {
+            Icon(Icons.Filled.PhotoLibrary, contentDescription = "Open gallery", tint = Color.White)
         }
     }
 }
