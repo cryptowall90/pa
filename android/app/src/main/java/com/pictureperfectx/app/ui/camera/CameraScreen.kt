@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.ui.components.CameraControls
 import com.pictureperfectx.app.ui.components.CameraTopBar
 import com.pictureperfectx.app.ui.components.FilterCarousel
+import com.pictureperfectx.app.ui.components.IntensitySlider
 
 /**
  * The single-screen camera experience: full-bleed filtered preview with the flash control up top,
@@ -72,9 +73,17 @@ fun CameraScreen(
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // Intensity slider (0-100) appears only for real LUTs, not Original.
+                if (state.intensityEnabled) {
+                    IntensitySlider(
+                        filterName = state.selectedFilter?.displayName.orEmpty(),
+                        intensity = state.intensity,
+                        onIntensityChange = viewModel::onIntensityChanged,
+                    )
+                }
                 FilterCarousel(
                     filters = state.filters,
                     selectedFilterId = state.selectedFilterId,

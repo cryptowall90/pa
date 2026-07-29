@@ -17,6 +17,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageLookupFilter
 import jp.co.cyberagent.android.gpuimage.util.Rotation
 import java.util.concurrent.Executors
 
@@ -49,7 +50,12 @@ class CameraController(context: Context) {
     var flashMode: Int = ImageCapture.FLASH_MODE_OFF
         private set
 
-    private var currentFilter: Filter = com.pictureperfectx.app.filter.FilterCatalog.default
+    private var currentFilter: Filter = com.pictureperfectx.app.filter.FilterCatalog.original
+
+    // 0..1 LUT blend, controlled live by the app's 0-100 intensity slider.
+    private var intensity: Float = 1f
+    private var previewLookup: GPUImageLookupFilter? = null
+    private var captureLookup: GPUImageLookupFilter? = null
 
     init {
         previewGpuImage.setScaleType(GPUImage.ScaleType.CENTER_CROP)
@@ -109,9 +115,21 @@ class CameraController(context: Context) {
 
     fun applyFilter(filter: Filter) {
         currentFilter = filter
-        // Distinct instances: one per GL context.
-        previewGpuImage.setFilter(FilterFactory.create(appContext, filter))
-        captureGpuImage.setFilter(FilterFactory.create(appContext, filter))
+        // Distinct instances: one per GL context. Keep the lookup refs for live intensity control.
+        val preview = FilterFactory.create(appContext, filter, intensity)
+        val capture = FilterFactory.create(appContext, filter, intensity)
+        previewLookup = preview.lookup
+        captureLookup = capture.lookup
+        previewGpuImage.setFilter(preview.filter)
+        captureGpuImage.setFilter(capture.filter)
+    }
+
+    /** Live intensity update (0..100). Applies to the current LUT without rebuilding the pipeline. */
+    fun setIntensity(percent: Int) {
+        intensity = (percent.coerceIn(0, 100)) / 100f
+        previewLookup?.setIntensity(intensity)
+        captureLookup?.setIntensity(intensity)
+        previewGpuImage.requestRender()
     }
 
     fun toggleLens() {
