@@ -1,0 +1,93 @@
+package com.pictureperfectx.app.ui.camera
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pictureperfectx.app.ui.components.CameraControls
+import com.pictureperfectx.app.ui.components.CameraTopBar
+import com.pictureperfectx.app.ui.components.FilterCarousel
+
+/**
+ * The single-screen camera experience: full-bleed filtered preview with the flash control up top,
+ * and the filter carousel + shutter row anchored to the bottom.
+ */
+@Composable
+fun CameraScreen(
+    modifier: Modifier = Modifier,
+    viewModel: CameraViewModel = viewModel(),
+) {
+    val state by viewModel.state.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            val message = when (event) {
+                is CameraEvent.Saved -> event.message
+                is CameraEvent.Error -> event.message
+            }
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
+    Scaffold(
+        modifier = modifier,
+        containerColor = Color.Black,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+    ) { padding ->
+        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Step 1 + 2: live, GPU-filtered camera preview fills the screen.
+            GpuCameraPreview(
+                controller = viewModel.controller,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            CameraTopBar(
+                flashMode = state.flashMode,
+                onCycleFlash = viewModel::onCycleFlash,
+                modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp),
+            )
+
+            // Bottom stack: filter carousel (Step 3) above the shutter row (Step 4).
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                FilterCarousel(
+                    filters = state.filters,
+                    selectedFilterId = state.selectedFilterId,
+                    onFilterSelected = viewModel::onFilterSelected,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                CameraControls(
+                    isSaving = state.isSaving,
+                    lastSavedThumbUri = state.lastSavedThumbUri,
+                    onCapture = viewModel::onCapture,
+                    onToggleLens = viewModel::onToggleLens,
+                )
+            }
+        }
+    }
+}

@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Picture Perfect X</string>
+    <string name="permission_rationale">Picture Perfect X needs camera access to take filtered photos.</string>
+    <string name="grant_permission">Grant camera access</string>
+    <string name="capture">Capture</string>
+    <string name="switch_camera">Switch camera</string>
+    <string name="toggle_flash">Toggle flash</string>
+    <string name="saved_to_gallery">Saved to Pictures/PicturePerfectX</string>
+    <string name="save_failed">Couldn\'t save photo</string>
+</resources>
