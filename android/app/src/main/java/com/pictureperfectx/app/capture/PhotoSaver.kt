@@ -22,7 +22,8 @@ data class SavedPhoto(val uri: Uri, val displayName: String, val width: Int, val
 object PhotoSaver {
 
     private const val ALBUM = "PicturePerfectX"
-    private const val RELATIVE_PATH = "${Environment.DIRECTORY_PICTURES}/$ALBUM"
+    // Not `const`: Environment.DIRECTORY_PICTURES is a runtime field, so this is resolved at runtime.
+    private val RELATIVE_PATH = "${Environment.DIRECTORY_PICTURES}/$ALBUM"
 
     fun save(context: Context, bitmap: Bitmap): SavedPhoto {
         val displayName = "PPX_${System.currentTimeMillis()}.jpg"
