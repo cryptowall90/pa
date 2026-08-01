@@ -98,7 +98,7 @@ class CameraController(context: Context) {
         val preview = Preview.Builder().build().also { it.setSurfaceProvider(sp) }
         val capture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setFlashMode(flashMode)
+            .setFlashMode(imageFlashMode())
             .build()
         imageCapture = capture
 
@@ -205,9 +205,17 @@ class CameraController(context: Context) {
             ImageCapture.FLASH_MODE_ON -> ImageCapture.FLASH_MODE_AUTO
             else -> ImageCapture.FLASH_MODE_OFF
         }
-        imageCapture?.flashMode = flashMode
+        imageCapture?.flashMode = imageFlashMode()
         return flashMode
     }
+
+    /**
+     * ImageCapture flash mode. "On" is driven by the torch during capture (reliable across devices),
+     * so ImageCapture itself is OFF for that mode to avoid a double fire; "Auto" and "Off" pass
+     * straight through to the hardware.
+     */
+    private fun imageFlashMode(): Int =
+        if (flashMode == ImageCapture.FLASH_MODE_ON) ImageCapture.FLASH_MODE_OFF else flashMode
 
     /**
      * Captures a full-resolution still and renders it through the selected look + adjustments on a
@@ -215,6 +223,10 @@ class CameraController(context: Context) {
      */
     fun capture(onResult: (Bitmap, Filter) -> Unit, onFailure: (Throwable) -> Unit) {
         val capture = imageCapture ?: return onFailure(IllegalStateException("Camera not ready"))
+        // "On" -> light the torch for the duration of the shot so the flash always fires.
+        val useTorch = flashMode == ImageCapture.FLASH_MODE_ON
+        if (useTorch) runCatching { camera?.cameraControl?.enableTorch(true) }
+        val stopTorch = { if (useTorch) runCatching { camera?.cameraControl?.enableTorch(false) } }
         capture.takePicture(
             captureExecutor,
             object : ImageCapture.OnImageCapturedCallback() {
@@ -227,10 +239,14 @@ class CameraController(context: Context) {
                         onFailure(e)
                     } finally {
                         image.close()
+                        stopTorch()
                     }
                 }
 
-                override fun onError(exception: ImageCaptureException) = onFailure(exception)
+                override fun onError(exception: ImageCaptureException) {
+                    stopTorch()
+                    onFailure(exception)
+                }
             },
         )
     }
