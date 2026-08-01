@@ -12,6 +12,16 @@ data class CameraUiState(
     val isFrontFacing: Boolean = false,
     val isSaving: Boolean = false,
     val lastSavedThumbUri: String? = null,
+    val showFilters: Boolean = true,         // filter carousel + intensity visibility
+    // Manual controls
+    val showAdjustments: Boolean = false,
+    val selectedAdjustment: Adjustment = Adjustment.Brightness,
+    val brightness: Int = 0,                 // -100..100
+    val contrast: Int = 0,                   // -100..100
+    val saturation: Int = 0,                 // -100..100
+    val exposure: Int = 0,                   // EV index within [exposureMin, exposureMax]
+    val exposureMin: Int = 0,
+    val exposureMax: Int = 0,
 ) {
     val selectedFilter: Filter?
         get() = filters.firstOrNull { it.id == selectedFilterId }
@@ -19,6 +29,17 @@ data class CameraUiState(
     /** Intensity only applies to a real LUT — hide the slider on Original. */
     val intensityEnabled: Boolean
         get() = selectedFilter?.isOriginal == false
+
+    val exposureSupported: Boolean
+        get() = exposureMax > exposureMin
+}
+
+/** One manual adjustment, chosen one-at-a-time in the adjustments row. */
+enum class Adjustment(val label: String) {
+    Exposure("Exposure"),
+    Brightness("Brightness"),
+    Contrast("Contrast"),
+    Saturation("Saturation"),
 }
 
 /** One-shot messages surfaced as a snackbar. */

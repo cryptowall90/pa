@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pictureperfectx.app.ui.components.AdjustPanel
 import com.pictureperfectx.app.ui.components.CameraControls
 import com.pictureperfectx.app.ui.components.CameraTopBar
 import com.pictureperfectx.app.ui.components.FilterCarousel
@@ -56,14 +57,21 @@ fun CameraScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             // Live, GPU-filtered camera preview (SurfaceProcessor effect) fills the screen.
+            // Tap-to-focus and pinch-to-zoom are handled inside CameraPreview.
             CameraPreview(
                 controller = viewModel.controller,
+                onFocus = viewModel::onFocus,
+                onZoom = viewModel::onZoom,
                 modifier = Modifier.fillMaxSize(),
             )
 
             CameraTopBar(
                 flashMode = state.flashMode,
+                adjustmentsOpen = state.showAdjustments,
+                filtersOpen = state.showFilters,
                 onCycleFlash = viewModel::onCycleFlash,
+                onToggleAdjustments = viewModel::onToggleAdjustments,
+                onToggleFilters = viewModel::onToggleFilters,
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp),
             )
 
@@ -77,20 +85,33 @@ fun CameraScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Intensity slider (0-100) appears only for real LUTs, not Original.
-                if (state.intensityEnabled) {
-                    IntensitySlider(
-                        filterName = state.selectedFilter?.displayName.orEmpty(),
-                        intensity = state.intensity,
-                        onIntensityChange = viewModel::onIntensityChanged,
+                // Manual adjustments: chip row + a single slider (one adjustment at a time).
+                if (state.showAdjustments) {
+                    AdjustPanel(
+                        state = state,
+                        onSelect = viewModel::onSelectAdjustment,
+                        onExposure = viewModel::onExposureChanged,
+                        onBrightness = viewModel::onBrightnessChanged,
+                        onContrast = viewModel::onContrastChanged,
+                        onSaturation = viewModel::onSaturationChanged,
                     )
                 }
-                FilterCarousel(
-                    filters = state.filters,
-                    selectedFilterId = state.selectedFilterId,
-                    onFilterSelected = viewModel::onFilterSelected,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // Filters (carousel + intensity) — hideable for a full-screen camera.
+                if (state.showFilters) {
+                    if (state.intensityEnabled) {
+                        IntensitySlider(
+                            filterName = state.selectedFilter?.displayName.orEmpty(),
+                            intensity = state.intensity,
+                            onIntensityChange = viewModel::onIntensityChanged,
+                        )
+                    }
+                    FilterCarousel(
+                        filters = state.filters,
+                        selectedFilterId = state.selectedFilterId,
+                        onFilterSelected = viewModel::onFilterSelected,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 CameraControls(
                     isSaving = state.isSaving,
                     lastSavedThumbUri = state.lastSavedThumbUri,

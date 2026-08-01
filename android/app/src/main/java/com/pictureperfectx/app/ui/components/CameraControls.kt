@@ -16,9 +16,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashAuto
+import androidx.compose.material.icons.filled.FilterVintage
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -41,6 +43,7 @@ private fun CircleIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Int = 48,
+    tint: Color = Color.White,
 ) {
     Box(
         modifier = modifier
@@ -50,15 +53,22 @@ private fun CircleIconButton(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = contentDescription, tint = Color.White)
+        Icon(icon, contentDescription = contentDescription, tint = tint)
     }
 }
 
-/** Top overlay bar: flash mode toggle. */
+/**
+ * Top overlay bar: flash (left); filters toggle + adjustments toggle (right). The two toggles
+ * let the user clear the filter strip and the sliders for a full-screen camera.
+ */
 @Composable
 fun CameraTopBar(
     flashMode: Int,
+    adjustmentsOpen: Boolean,
+    filtersOpen: Boolean,
     onCycleFlash: () -> Unit,
+    onToggleAdjustments: () -> Unit,
+    onToggleFilters: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val icon = when (flashMode) {
@@ -68,9 +78,23 @@ fun CameraTopBar(
     }
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.Start,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         CircleIconButton(icon = icon, contentDescription = "Toggle flash", onClick = onCycleFlash)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            CircleIconButton(
+                icon = Icons.Filled.FilterVintage,
+                contentDescription = "Show/hide filters",
+                onClick = onToggleFilters,
+                tint = if (filtersOpen) Color(0xFFFF4D6D) else Color.White,
+            )
+            CircleIconButton(
+                icon = Icons.Filled.Tune,
+                contentDescription = "Show/hide adjustments",
+                onClick = onToggleAdjustments,
+                tint = if (adjustmentsOpen) Color(0xFFFF4D6D) else Color.White,
+            )
+        }
     }
 }
 
