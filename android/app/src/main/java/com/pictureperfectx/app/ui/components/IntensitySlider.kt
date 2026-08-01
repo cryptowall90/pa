@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
@@ -60,6 +61,7 @@ fun IntensitySlider(
                 activeTrackColor = Color(0xFFFF4D6D),
                 inactiveTrackColor = Color(0x55FFFFFF),
             ),
+            modifier = Modifier.fillMaxWidth().height(26.dp),
         )
     }
 }

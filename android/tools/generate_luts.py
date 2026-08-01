@@ -283,6 +283,41 @@ CREATIVE = [
 PROFILES = CAMERAS + LENSES + FILM + CREATIVE
 
 
+# Display names shown in the app. Coined, non-trademarked names — the profiles above are only
+# *inspired by* the named gear/film, so the UI must not use those companies' or products' names.
+DISPLAY_NAMES = {
+    # Cameras
+    "fuji_provia": "Chrome Slide", "fuji_velvia": "Velvet Vivid", "fuji_astia": "Soft Chrome",
+    "fuji_classic_chrome": "Muted Chrome", "fuji_pro_neg": "Studio Neg", "fuji_eterna": "Cine Muted",
+    "fuji_acros": "Fine Silver", "canon_standard": "Neutral Pro", "canon_portrait": "Warm Portrait",
+    "nikon_standard": "Clear Standard", "nikon_vivid": "Bold Vivid", "sony_standard": "Crisp Standard",
+    "sony_deep": "Deep Tone", "leica_standard": "Rangefinder", "leica_classic": "Classic Range",
+    "leica_monochrom": "Mono Range", "hasselblad_natural": "Medium Format", "ricoh_positive": "Positive Snap",
+    "olympus_om": "Retro Compact", "panasonic_lumix": "Natural Lumen", "pentax_bright": "Bright Prime",
+    "sigma_foveon": "Deep Sensor", "arri_alexa": "Cinema Log", "red_komodo": "Digital Cine",
+    "blackmagic_film": "Pocket Film", "pixel_hdr": "Computational HDR",
+    # Lenses
+    "summicron_35": "Prime 35", "noctilux_50": "Night 50", "summilux_50": "Lux 50",
+    "zeiss_planar": "Flat Field 50", "zeiss_sonnar": "Warm Glass", "zeiss_distagon": "Wide Glass",
+    "canon_l_85": "Portrait 85", "nikkor_105": "Tele 105", "helios_44": "Swirl Bokeh",
+    "voigtlander_nokton": "Fast Nifty", "sigma_art": "Art Prime", "petzval": "Old Swirl",
+    "lomo_lens": "Toy Swirl", "cooke_s4": "Soft Cine", "angenieux": "Cine Zoom",
+    "trioplan": "Soap Bubble", "minolta_rokkor": "Warm Prime", "contax_zeiss": "Contrast Glass",
+    "takumar": "Vintage 50", "jupiter_8": "Planet 50", "nikkor_58_noct": "Night 58",
+    "leica_apo": "APO Prime", "fujinon_xf": "Crystal Prime", "laowa_macro": "Macro Close",
+    # Film
+    "kodak_portra_400": "Portrait 400", "kodak_portra_800": "Portrait 800", "kodak_gold_200": "Golden 200",
+    "kodak_ektar_100": "Vivid 100", "kodak_ektachrome": "Chrome Reversal", "kodak_ultramax": "Everyday 400",
+    "kodak_tri_x": "Grain 400", "kodak_tmax": "Fine Mono 100", "fuji_superia": "Super Color",
+    "fuji_pro_400h": "Pastel 400", "fuji_c200": "Everyday 200", "cinestill_800t": "Tungsten Cine 800",
+    "cinestill_50d": "Daylight Cine 50", "agfa_vista": "Color Pop", "agfa_apx": "Contrast Mono",
+    "ilford_hp5": "Press Mono 400", "ilford_delta": "Fine Grain Mono", "lomography_400": "Toy Color 400",
+    "polaroid_600": "Instant 600", "polaroid_sx70": "Instant Classic", "instax": "Mini Instant",
+    "provia_slide": "Slide Film", "velvia_50": "Velvet 50", "expired_film": "Expired Roll",
+    "redscale": "Redscale", "technicolor_2": "Three Strip",
+}
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     base = identity_lut()
@@ -306,7 +341,7 @@ def main():
         s0, s1 = swatch(params)
         manifest.append({
             "id": pid,
-            "name": prof["name"],
+            "name": DISPLAY_NAMES.get(pid, prof["name"]),
             "category": prof["category"],
             "asset": f"luts/{fname}",
             "swatchStart": s0,

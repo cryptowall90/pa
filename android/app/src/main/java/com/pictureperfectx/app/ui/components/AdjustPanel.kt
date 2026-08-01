@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
@@ -118,7 +119,7 @@ private fun ValueSlider(
                 activeTrackColor = Brand,
                 inactiveTrackColor = Color(0x55FFFFFF),
             ),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).height(26.dp),
         )
         Text(
             text = "$value",
