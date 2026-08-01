@@ -232,7 +232,10 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
         uLut = GLES20.glGetUniformLocation(program, "sLut")
 
         // The OES (camera) texture is created per input surface in onInputSurface.
-        lutTexId = createTexture(GLES20.GL_TEXTURE_2D)
+        // NEAREST on the LUT: linear filtering bleeds across the 8x8 tile boundaries of the lookup
+        // image and produces wrong high-chroma (teal) colors. Blue-axis smoothness still comes from
+        // the shader's two-slice blend.
+        lutTexId = createTexture(GLES20.GL_TEXTURE_2D, GLES20.GL_NEAREST)
         // A 1x1 dummy so the LUT sampler is always valid (ignored while uApplyLut == 0).
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lutTexId)
         val dummy = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder()).put(
@@ -246,12 +249,12 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
         GLES20.glClearColor(0f, 0f, 0f, 1f)
     }
 
-    private fun createTexture(target: Int): Int {
+    private fun createTexture(target: Int, filter: Int = GLES20.GL_LINEAR): Int {
         val ids = IntArray(1)
         GLES20.glGenTextures(1, ids, 0)
         GLES20.glBindTexture(target, ids[0])
-        GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MIN_FILTER, filter)
+        GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_MAG_FILTER, filter)
         GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(target, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         return ids[0]

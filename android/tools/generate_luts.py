@@ -44,6 +44,37 @@ def _as3(v):
     return np.array([v, v, v], dtype=np.float32)
 
 
+# Global richness: push each look's defining traits harder so the pack reads as vibrant and the
+# 100 looks are clearly distinct from one another. 1.0 = original grades; >1 = stronger.
+RICHNESS = 1.6
+
+
+def amplify(p):
+    """Scale a profile's parameters by RICHNESS so looks are richer and more differentiated.
+    Multiplicative params pivot around 1.0; additive params scale from 0."""
+    r = RICHNESS
+    out = dict(p)
+    for k in ("saturation", "contrast", "gamma"):
+        if k in out:
+            v = out[k]
+            if isinstance(v, (list, tuple)):
+                out[k] = [1 + (x - 1) * r for x in v]
+            else:
+                out[k] = 1 + (v - 1) * r
+    if "gain" in out:
+        g = _as3(out["gain"])
+        out["gain"] = [float(1 + (x - 1) * r) for x in g]
+    for k in ("temp", "tint", "exposure", "vibrance", "fade",
+              "shadow_amt", "highlight_amt", "lift"):
+        if k in out:
+            v = out[k]
+            if isinstance(v, (list, tuple)):
+                out[k] = [x * r for x in v]
+            else:
+                out[k] = v * r
+    return out
+
+
 def luma(rgb):
     return (rgb[..., 0] * 0.299 + rgb[..., 1] * 0.587 + rgb[..., 2] * 0.114)[..., None]
 
@@ -266,12 +297,13 @@ def main():
         if prof["category"] in ("camera", "lens"):
             cam_lens += 1
 
-        graded = apply_grade(base, prof["params"])
+        params = amplify(prof["params"])
+        graded = apply_grade(base, params)
         img = Image.fromarray((graded * 255.0 + 0.5).astype(np.uint8), "RGB")
         fname = f"{pid}.png"
         img.save(os.path.join(OUT_DIR, fname), optimize=True)
 
-        s0, s1 = swatch(prof["params"])
+        s0, s1 = swatch(params)
         manifest.append({
             "id": pid,
             "name": prof["name"],
