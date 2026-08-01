@@ -26,28 +26,29 @@ Fully native Kotlin. No cross-platform runtime.
 | Concern            | Choice                                                      |
 | ------------------ | ---------------------------------------------------------- |
 | UI                 | Jetpack Compose (Material 3), single-activity              |
-| Camera             | CameraX (`ImageAnalysis` feed + `ImageCapture`)            |
-| Real-time filters  | GPUImage (`jp.co.cyberagent.android:gpuimage`) on a `GLSurfaceView` |
-| Filter definitions | Declarative catalog → GPUImage pipelines (LUT or parametric) |
+| Camera             | CameraX (`Preview` + `CameraEffect` + `ImageCapture`)      |
+| Real-time filters  | GPU `SurfaceProcessor` (OpenGL ES) LUT shader on the preview |
+| Still filtering    | GPUImage (`jp.co.cyberagent.android:gpuimage`), offscreen  |
+| Filter definitions | Declarative catalog → 512×512 lookup tables                |
 | Persistence        | Room (captured-photo index) + MediaStore (the images)      |
 | Min / target SDK   | 24 / 35                                                     |
 
 ### The four build steps, mapped to code
 
-1. **Camera setup** — `ui/camera/GpuCameraPreview.kt` binds CameraX to the
-   Compose lifecycle for a live back/front preview. A literal `PreviewView`
-   reference implementation is also included in
-   `ui/camera/PreviewViewCamera.kt`.
-2. **Filter engine** — `camera/CameraController.kt` wraps the CameraX frame feed
-   into GPUImage: each `ImageAnalysis` frame is converted to NV21
-   (`camera/Yuv.kt`) and pushed via `updatePreviewFrame(...)`. LUT bitmaps are
-   applied in real time by `filter/FilterFactory.kt`.
+1. **Camera setup** — `ui/camera/CameraPreview.kt` binds a hardware CameraX
+   `PreviewView` to the Compose lifecycle for a live back/front preview.
+2. **Filter engine** — the preview is filtered entirely on the GPU:
+   `camera/LutSurfaceProcessor.kt` is a CameraX `SurfaceProcessor` that samples
+   the camera's OES texture and applies the active LUT in a fragment shader (no
+   per-frame CPU copy), attached via a `CameraEffect` in
+   `camera/CameraController.kt`. This keeps the filtered viewfinder stock-camera
+   smooth and instant.
 3. **Filter selector UI** — `ui/components/FilterCarousel.kt` is the bottom
-   `LazyRow` of thumbnails for the 100-look pack. Tapping one swaps the active
-   GPU filter instantly.
+   `LazyRow` of lightweight chips (color + lens glyph + name) for the 100-look
+   pack. Tapping one swaps the active GPU LUT instantly.
 4. **Capture & save** — the shutter in `ui/components/CameraControls.kt` takes a
-   full-resolution still, renders it through the **same** filter on a dedicated
-   GPUImage context, and `capture/PhotoSaver.kt` writes it to
+   full-resolution still, renders it through the **same** LUT on a detached
+   GPUImage instance, and `capture/PhotoSaver.kt` writes it to
    `Pictures/PicturePerfectX` via MediaStore.
 
 ### LUT pack + intensity (100 looks)
@@ -60,15 +61,12 @@ Fully native Kotlin. No cross-platform runtime.
   Canon, Nikon, Sony, Hasselblad, Alexa; Summicron, Noctilux, Zeiss, Helios,
   Cooke…), plus film stocks (Portra, Ektar, Tri-X, CineStill…) and creative looks.
   These are parametric emulations *inspired by* the gear — not official profiles.
-- **0-100 intensity slider** (`ui/components/IntensitySlider.kt`) drives
-  `GPUImageLookupFilter.setIntensity` live on both the preview and the capture
-  pipeline; it's hidden for **Original**.
-- **Live per-thumbnail previews** — the carousel shows each look applied to the
-  *current scene*, not an abstract chip. `CameraController` publishes a small,
-  throttled snapshot of the live frame; `filter/LutThumbnails.kt` applies each
-  LUT to it on the CPU (background thread, decoded-LUT LRU cache) so the strip
-  stays fast even across 100 looks. Falls back to the swatch gradient until the
-  first frame arrives.
+- **0-100 intensity slider** (`ui/components/IntensitySlider.kt`) drives the LUT
+  blend live — the preview shader's `uIntensity` uniform and the capture LUT — so
+  the viewfinder updates as you drag; it's hidden for **Original**.
+- **Lightweight filter chips** — each look is a small color tile with a lens
+  glyph and its name, so the strip and the preview stay smooth across 100 looks.
+  (The camera image lives only in the main viewfinder.)
 
 ### In-app gallery (`ui/gallery/`)
 

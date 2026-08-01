@@ -37,7 +37,6 @@ fun CameraScreen(
     viewModel: CameraViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val previewSnapshot by viewModel.controller.previewSnapshot.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -56,8 +55,8 @@ fun CameraScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // Step 1 + 2: live, GPU-filtered camera preview fills the screen.
-            GpuCameraPreview(
+            // Live, GPU-filtered camera preview (SurfaceProcessor effect) fills the screen.
+            CameraPreview(
                 controller = viewModel.controller,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -89,7 +88,6 @@ fun CameraScreen(
                 FilterCarousel(
                     filters = state.filters,
                     selectedFilterId = state.selectedFilterId,
-                    previewSource = previewSnapshot,
                     onFilterSelected = viewModel::onFilterSelected,
                     modifier = Modifier.fillMaxWidth(),
                 )
