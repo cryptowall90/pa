@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -41,6 +42,7 @@ private fun CircleIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Int = 48,
+    tint: Color = Color.White,
 ) {
     Box(
         modifier = modifier
@@ -50,15 +52,17 @@ private fun CircleIconButton(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = contentDescription, tint = Color.White)
+        Icon(icon, contentDescription = contentDescription, tint = tint)
     }
 }
 
-/** Top overlay bar: flash mode toggle. */
+/** Top overlay bar: flash mode toggle (left) and manual-adjustments toggle (right). */
 @Composable
 fun CameraTopBar(
     flashMode: Int,
+    adjustmentsOpen: Boolean,
     onCycleFlash: () -> Unit,
+    onToggleAdjustments: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val icon = when (flashMode) {
@@ -68,9 +72,15 @@ fun CameraTopBar(
     }
     Row(
         modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.Start,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         CircleIconButton(icon = icon, contentDescription = "Toggle flash", onClick = onCycleFlash)
+        CircleIconButton(
+            icon = Icons.Filled.Tune,
+            contentDescription = "Adjustments",
+            onClick = onToggleAdjustments,
+            tint = if (adjustmentsOpen) Color(0xFFFF4D6D) else Color.White,
+        )
     }
 }
 

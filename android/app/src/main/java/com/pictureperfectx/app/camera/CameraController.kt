@@ -5,11 +5,15 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.util.Log
+import android.util.Range
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.MeteringPoint
 import androidx.camera.core.Preview
 import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.UseCaseGroup
@@ -17,25 +21,34 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
-import java.util.concurrent.Executor
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageBrightnessFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageContrastFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageLookupFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 /**
  * Owns the CameraX pipeline.
  *
  *  - The **live preview** is filtered on the GPU by [LutSurfaceProcessor], attached as a
  *    [CameraEffect] on the [Preview] use case and rendered straight into a hardware PreviewView.
- *    No per-frame CPU copy — this is what keeps it stock-camera smooth and instant.
- *  - The **full-resolution still** is rendered through the same look on a detached [captureGpuImage]
- *    (GPUImage offscreen), so the saved photo matches the preview.
+ *  - The **full-resolution still** is rendered through the same look + tone adjustments on a
+ *    detached [captureGpuImage] (GPUImage offscreen), on a background thread so the shutter never
+ *    blocks the UI.
+ *  - Focus, zoom and exposure go through the bound [camera]'s CameraControl.
  */
 class CameraController(context: Context) {
 
     private val appContext = context.applicationContext
+    // Full-res capture processing runs here so pressing the shutter doesn't stall the main thread.
+    private val captureExecutor = Executors.newSingleThreadExecutor()
 
     private val processor = LutSurfaceProcessor(appContext)
 
@@ -43,6 +56,7 @@ class CameraController(context: Context) {
     private var captureLookup: GPUImageLookupFilter? = null
 
     private var cameraProvider: ProcessCameraProvider? = null
+    private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var surfaceProvider: Preview.SurfaceProvider? = null
     private var boundLifecycleOwner: LifecycleOwner? = null
@@ -54,6 +68,11 @@ class CameraController(context: Context) {
 
     private var currentFilter: Filter = FilterCatalog.original
     private var intensity: Float = 1f
+
+    // Post-LUT tone adjustments (shared by preview shader + capture pipeline).
+    private var brightnessF = 0f // additive, [-0.5, 0.5]
+    private var contrastF = 1f    // [0, 2], 1 = unchanged
+    private var saturationF = 1f  // [0, 2], 1 = unchanged
 
     /** The PreviewView supplies its surface provider before [bind]. */
     fun setSurfaceProvider(provider: Preview.SurfaceProvider) {
@@ -78,7 +97,7 @@ class CameraController(context: Context) {
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val preview = Preview.Builder().build().also { it.setSurfaceProvider(sp) }
         val capture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setFlashMode(flashMode)
             .build()
         imageCapture = capture
@@ -91,21 +110,22 @@ class CameraController(context: Context) {
             .build()
 
         try {
-            provider.bindToLifecycle(owner, selector, group)
+            camera = provider.bindToLifecycle(owner, selector, group)
         } catch (e: Exception) {
             Log.e(TAG, "Use case binding failed", e)
         }
-        // Re-assert the current look on the processor for the fresh binding.
+        // Re-assert the current look + adjustments on the processor for the fresh binding.
         processor.setLut(currentFilter.lutAsset)
         processor.setIntensity(intensity)
+        processor.setBrightness(brightnessF)
+        processor.setContrast(contrastF)
+        processor.setSaturation(saturationF)
     }
 
     fun applyFilter(filter: Filter) {
         currentFilter = filter
         processor.setLut(filter.lutAsset)
-        val built = FilterFactory.create(appContext, filter, intensity)
-        captureLookup = built.lookup
-        captureGpuImage.setFilter(built.filter)
+        rebuildCaptureFilter()
     }
 
     /** Live intensity update (0..100) — preview shader + capture pipeline. */
@@ -113,6 +133,64 @@ class CameraController(context: Context) {
         intensity = percent.coerceIn(0, 100) / 100f
         processor.setIntensity(intensity)
         captureLookup?.setIntensity(intensity)
+    }
+
+    // ---- Tone adjustments (percent -100..100, 0 = neutral) -------------------------------------
+
+    fun setBrightness(percent: Int) {
+        brightnessF = percent.coerceIn(-100, 100) / 200f
+        processor.setBrightness(brightnessF)
+        rebuildCaptureFilter()
+    }
+
+    fun setContrast(percent: Int) {
+        contrastF = 1f + percent.coerceIn(-100, 100) / 100f
+        processor.setContrast(contrastF)
+        rebuildCaptureFilter()
+    }
+
+    fun setSaturation(percent: Int) {
+        saturationF = 1f + percent.coerceIn(-100, 100) / 100f
+        processor.setSaturation(saturationF)
+        rebuildCaptureFilter()
+    }
+
+    /** Rebuild the capture filter chain: LUT (if any) then brightness/contrast/saturation. */
+    private fun rebuildCaptureFilter() {
+        val built = FilterFactory.create(appContext, currentFilter, intensity)
+        captureLookup = built.lookup
+        val filters = ArrayList<GPUImageFilter>()
+        built.lookup?.let { filters.add(it) }
+        filters.add(GPUImageBrightnessFilter(brightnessF))
+        filters.add(GPUImageContrastFilter(contrastF))
+        filters.add(GPUImageSaturationFilter(saturationF))
+        captureGpuImage.setFilter(GPUImageFilterGroup(filters))
+    }
+
+    // ---- Camera control: focus / zoom / exposure ----------------------------------------------
+
+    fun focusAndMeter(point: MeteringPoint) {
+        val cam = camera ?: return
+        try {
+            cam.cameraControl.startFocusAndMetering(FocusMeteringAction.Builder(point).build())
+        } catch (e: Exception) {
+            Log.e(TAG, "Focus/metering failed", e)
+        }
+    }
+
+    /** Multiply the current zoom ratio by [factor] (from a pinch gesture), clamped to device limits. */
+    fun scaleZoom(factor: Float) {
+        val cam = camera ?: return
+        val state = cam.cameraInfo.zoomState.value ?: return
+        val target = (state.zoomRatio * factor).coerceIn(state.minZoomRatio, state.maxZoomRatio)
+        cam.cameraControl.setZoomRatio(target)
+    }
+
+    fun exposureRange(): Range<Int> =
+        camera?.cameraInfo?.exposureState?.exposureCompensationRange ?: Range(0, 0)
+
+    fun setExposureIndex(index: Int) {
+        camera?.cameraControl?.setExposureCompensationIndex(index)
     }
 
     fun toggleLens() {
@@ -132,13 +210,13 @@ class CameraController(context: Context) {
     }
 
     /**
-     * Captures a full-resolution still, renders it through the selected filter, and returns the
-     * finished [Bitmap] on the main thread via [onResult]. [onFailure] fires on failure.
+     * Captures a full-resolution still and renders it through the selected look + adjustments on a
+     * background thread, delivering the finished [Bitmap] via [onResult] (also off the main thread).
      */
     fun capture(onResult: (Bitmap, Filter) -> Unit, onFailure: (Throwable) -> Unit) {
         val capture = imageCapture ?: return onFailure(IllegalStateException("Camera not ready"))
         capture.takePicture(
-            ContextCompat.getMainExecutor(appContext),
+            captureExecutor,
             object : ImageCapture.OnImageCapturedCallback() {
                 override fun onCaptureSuccess(image: ImageProxy) {
                     try {
@@ -159,6 +237,7 @@ class CameraController(context: Context) {
 
     fun release() {
         processor.release()
+        captureExecutor.shutdown()
         cameraProvider?.unbindAll()
     }
 

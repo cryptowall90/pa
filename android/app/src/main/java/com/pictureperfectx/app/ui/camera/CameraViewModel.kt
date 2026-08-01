@@ -63,6 +63,45 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(flashMode = mode) }
     }
 
+    // ---- Manual controls -----------------------------------------------------------------------
+
+    fun onToggleAdjustments() {
+        val range = controller.exposureRange()
+        _state.update {
+            it.copy(
+                showAdjustments = !it.showAdjustments,
+                exposureMin = range.lower,
+                exposureMax = range.upper,
+            )
+        }
+    }
+
+    fun onBrightnessChanged(v: Int) {
+        controller.setBrightness(v)
+        _state.update { it.copy(brightness = v) }
+    }
+
+    fun onContrastChanged(v: Int) {
+        controller.setContrast(v)
+        _state.update { it.copy(contrast = v) }
+    }
+
+    fun onSaturationChanged(v: Int) {
+        controller.setSaturation(v)
+        _state.update { it.copy(saturation = v) }
+    }
+
+    fun onExposureChanged(index: Int) {
+        controller.setExposureIndex(index)
+        _state.update { it.copy(exposure = index) }
+    }
+
+    /** Tap-to-focus at a metering point built by the PreviewView. */
+    fun onFocus(point: androidx.camera.core.MeteringPoint) = controller.focusAndMeter(point)
+
+    /** Pinch-to-zoom: multiply current zoom by the gesture's scale factor. */
+    fun onZoom(factor: Float) = controller.scaleZoom(factor)
+
     fun onCapture() {
         if (_state.value.isSaving) return
         _state.update { it.copy(isSaving = true) }

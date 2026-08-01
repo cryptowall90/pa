@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.pictureperfectx.app.ui.components.AdjustPanel
 import com.pictureperfectx.app.ui.components.CameraControls
 import com.pictureperfectx.app.ui.components.CameraTopBar
 import com.pictureperfectx.app.ui.components.FilterCarousel
@@ -56,14 +57,19 @@ fun CameraScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             // Live, GPU-filtered camera preview (SurfaceProcessor effect) fills the screen.
+            // Tap-to-focus and pinch-to-zoom are handled inside CameraPreview.
             CameraPreview(
                 controller = viewModel.controller,
+                onFocus = viewModel::onFocus,
+                onZoom = viewModel::onZoom,
                 modifier = Modifier.fillMaxSize(),
             )
 
             CameraTopBar(
                 flashMode = state.flashMode,
+                adjustmentsOpen = state.showAdjustments,
                 onCycleFlash = viewModel::onCycleFlash,
+                onToggleAdjustments = viewModel::onToggleAdjustments,
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp),
             )
 
@@ -77,6 +83,16 @@ fun CameraScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // Manual adjustments panel (exposure / brightness / contrast / saturation).
+                if (state.showAdjustments) {
+                    AdjustPanel(
+                        state = state,
+                        onExposure = viewModel::onExposureChanged,
+                        onBrightness = viewModel::onBrightnessChanged,
+                        onContrast = viewModel::onContrastChanged,
+                        onSaturation = viewModel::onSaturationChanged,
+                    )
+                }
                 // Intensity slider (0-100) appears only for real LUTs, not Original.
                 if (state.intensityEnabled) {
                     IntensitySlider(

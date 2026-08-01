@@ -69,10 +69,16 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
     private var uApplyLut = 0
     private var uCamera = 0
     private var uLut = 0
+    private var uBrightness = 0
+    private var uContrast = 0
+    private var uSaturation = 0
 
     private var lutTexId = 0
     private var intensity = 1f
     private var applyLut = 0f
+    private var brightness = 0f // additive, [-0.5, 0.5]
+    private var contrast = 1f    // multiplicative around 0.5, [0, 2]
+    private var saturation = 1f  // [0, 2], 1 = unchanged
 
     init {
         glHandler.post { initGl() }
@@ -107,6 +113,11 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
     fun setIntensity(value: Float) {
         glHandler.post { intensity = value.coerceIn(0f, 1f) }
     }
+
+    /** Post-LUT tone adjustments applied to the preview (mirrored on capture by GPUImage). */
+    fun setBrightness(value: Float) = glHandler.post { brightness = value.coerceIn(-0.5f, 0.5f) }
+    fun setContrast(value: Float) = glHandler.post { contrast = value.coerceIn(0f, 2f) }
+    fun setSaturation(value: Float) = glHandler.post { saturation = value.coerceIn(0f, 2f) }
 
     fun release() {
         glHandler.post { releaseGl() }
@@ -182,6 +193,9 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
         GLES20.glUniformMatrix4fv(uTexMatrix, 1, false, mvpTexMatrix, 0)
         GLES20.glUniform1f(uIntensity, intensity)
         GLES20.glUniform1f(uApplyLut, applyLut)
+        GLES20.glUniform1f(uBrightness, brightness)
+        GLES20.glUniform1f(uContrast, contrast)
+        GLES20.glUniform1f(uSaturation, saturation)
 
         GLES20.glEnableVertexAttribArray(aPosition)
         GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 0, quadVertices)
@@ -230,6 +244,9 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
         uApplyLut = GLES20.glGetUniformLocation(program, "uApplyLut")
         uCamera = GLES20.glGetUniformLocation(program, "sCamera")
         uLut = GLES20.glGetUniformLocation(program, "sLut")
+        uBrightness = GLES20.glGetUniformLocation(program, "uBrightness")
+        uContrast = GLES20.glGetUniformLocation(program, "uContrast")
+        uSaturation = GLES20.glGetUniformLocation(program, "uSaturation")
 
         // The OES (camera) texture is created per input surface in onInputSurface.
         // LINEAR matches GPUImage's proven lookup filter (its 0.5/512 tile insets keep sampling
@@ -361,6 +378,9 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
             uniform sampler2D sLut;
             uniform float uIntensity;
             uniform float uApplyLut;
+            uniform float uBrightness;
+            uniform float uContrast;
+            uniform float uSaturation;
             void main() {
                 vec4 cam = texture2D(sCamera, vTexCoord);
                 // Clamp to [0,1]: the camera can return values slightly outside range, which would
@@ -382,7 +402,12 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
                 vec4 n1 = texture2D(sLut, t1);
                 vec4 n2 = texture2D(sLut, t2);
                 vec3 graded = mix(n1.rgb, n2.rgb, fract(blueColor));
-                gl_FragColor = vec4(mix(cam.rgb, graded, uIntensity * uApplyLut), 1.0);
+                vec3 color = mix(cam.rgb, graded, uIntensity * uApplyLut);
+                color = color + uBrightness;
+                color = (color - 0.5) * uContrast + 0.5;
+                float l = dot(color, vec3(0.299, 0.587, 0.114));
+                color = mix(vec3(l), color, uSaturation);
+                gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
             }
         """
     }
