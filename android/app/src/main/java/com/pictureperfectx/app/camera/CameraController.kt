@@ -11,10 +11,13 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceProcessor
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
+import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
+import java.util.concurrent.Executor
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.filter.FilterFactory
@@ -80,9 +83,7 @@ class CameraController(context: Context) {
             .build()
         imageCapture = capture
 
-        val effect = CameraEffect(CameraEffect.PREVIEW, processor.executor, processor) { t ->
-            Log.e(TAG, "Preview effect error", t)
-        }
+        val effect = PreviewLutEffect(processor.executor, processor)
         val group = UseCaseGroup.Builder()
             .addUseCase(preview)
             .addUseCase(capture)
@@ -167,6 +168,17 @@ class CameraController(context: Context) {
         private const val TAG = "CameraController"
     }
 }
+
+/**
+ * CameraEffect is abstract with a protected constructor, so the preview LUT effect is a subclass.
+ * Targets the preview stream only; the still capture is filtered separately via GPUImage.
+ */
+private class PreviewLutEffect(executor: Executor, processor: SurfaceProcessor) : CameraEffect(
+    CameraEffect.PREVIEW,
+    executor,
+    processor,
+    Consumer<Throwable> { t -> Log.e("CameraController", "Preview effect error", t) },
+)
 
 /** Decodes the JPEG [ImageProxy] and applies its EXIF rotation (and front-camera mirroring). */
 private fun ImageProxy.toOrientedBitmap(mirror: Boolean): Bitmap {
