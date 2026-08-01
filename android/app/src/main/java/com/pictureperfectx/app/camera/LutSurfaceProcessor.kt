@@ -232,10 +232,9 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
         uLut = GLES20.glGetUniformLocation(program, "sLut")
 
         // The OES (camera) texture is created per input surface in onInputSurface.
-        // NEAREST on the LUT: linear filtering bleeds across the 8x8 tile boundaries of the lookup
-        // image and produces wrong high-chroma (teal) colors. Blue-axis smoothness still comes from
-        // the shader's two-slice blend.
-        lutTexId = createTexture(GLES20.GL_TEXTURE_2D, GLES20.GL_NEAREST)
+        // LINEAR matches GPUImage's proven lookup filter (its 0.5/512 tile insets keep sampling
+        // inside each tile); the real teal fix is clamping the camera input in the shader.
+        lutTexId = createTexture(GLES20.GL_TEXTURE_2D)
         // A 1x1 dummy so the LUT sampler is always valid (ignored while uApplyLut == 0).
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lutTexId)
         val dummy = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder()).put(
@@ -364,6 +363,9 @@ class LutSurfaceProcessor(private val appContext: Context) : SurfaceProcessor {
             uniform float uApplyLut;
             void main() {
                 vec4 cam = texture2D(sCamera, vTexCoord);
+                // Clamp to [0,1]: the camera can return values slightly outside range, which would
+                // push the LUT lookup outside its tile and read garbage (teal/cyan) colors.
+                cam.rgb = clamp(cam.rgb, 0.0, 1.0);
                 float blueColor = cam.b * 63.0;
                 vec2 quad1;
                 quad1.y = floor(floor(blueColor) / 8.0);
