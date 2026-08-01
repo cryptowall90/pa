@@ -68,12 +68,28 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     fun onToggleAdjustments() {
         val range = controller.exposureRange()
         _state.update {
+            val opening = !it.showAdjustments
+            // Default the selection to an available adjustment.
+            val selected = if (it.selectedAdjustment == Adjustment.Exposure && range.upper <= range.lower) {
+                Adjustment.Brightness
+            } else {
+                it.selectedAdjustment
+            }
             it.copy(
-                showAdjustments = !it.showAdjustments,
+                showAdjustments = opening,
+                selectedAdjustment = selected,
                 exposureMin = range.lower,
                 exposureMax = range.upper,
             )
         }
+    }
+
+    fun onToggleFilters() {
+        _state.update { it.copy(showFilters = !it.showFilters) }
+    }
+
+    fun onSelectAdjustment(adjustment: Adjustment) {
+        _state.update { it.copy(selectedAdjustment = adjustment) }
     }
 
     fun onBrightnessChanged(v: Int) {

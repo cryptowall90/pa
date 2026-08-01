@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashAuto
+import androidx.compose.material.icons.filled.FilterVintage
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -56,13 +57,18 @@ private fun CircleIconButton(
     }
 }
 
-/** Top overlay bar: flash mode toggle (left) and manual-adjustments toggle (right). */
+/**
+ * Top overlay bar: flash (left); filters toggle + adjustments toggle (right). The two toggles
+ * let the user clear the filter strip and the sliders for a full-screen camera.
+ */
 @Composable
 fun CameraTopBar(
     flashMode: Int,
     adjustmentsOpen: Boolean,
+    filtersOpen: Boolean,
     onCycleFlash: () -> Unit,
     onToggleAdjustments: () -> Unit,
+    onToggleFilters: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val icon = when (flashMode) {
@@ -75,12 +81,20 @@ fun CameraTopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         CircleIconButton(icon = icon, contentDescription = "Toggle flash", onClick = onCycleFlash)
-        CircleIconButton(
-            icon = Icons.Filled.Tune,
-            contentDescription = "Adjustments",
-            onClick = onToggleAdjustments,
-            tint = if (adjustmentsOpen) Color(0xFFFF4D6D) else Color.White,
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            CircleIconButton(
+                icon = Icons.Filled.FilterVintage,
+                contentDescription = "Show/hide filters",
+                onClick = onToggleFilters,
+                tint = if (filtersOpen) Color(0xFFFF4D6D) else Color.White,
+            )
+            CircleIconButton(
+                icon = Icons.Filled.Tune,
+                contentDescription = "Show/hide adjustments",
+                onClick = onToggleAdjustments,
+                tint = if (adjustmentsOpen) Color(0xFFFF4D6D) else Color.White,
+            )
+        }
     }
 }
 

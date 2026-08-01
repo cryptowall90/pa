@@ -12,8 +12,10 @@ data class CameraUiState(
     val isFrontFacing: Boolean = false,
     val isSaving: Boolean = false,
     val lastSavedThumbUri: String? = null,
+    val showFilters: Boolean = true,         // filter carousel + intensity visibility
     // Manual controls
     val showAdjustments: Boolean = false,
+    val selectedAdjustment: Adjustment = Adjustment.Brightness,
     val brightness: Int = 0,                 // -100..100
     val contrast: Int = 0,                   // -100..100
     val saturation: Int = 0,                 // -100..100
@@ -30,6 +32,14 @@ data class CameraUiState(
 
     val exposureSupported: Boolean
         get() = exposureMax > exposureMin
+}
+
+/** One manual adjustment, chosen one-at-a-time in the adjustments row. */
+enum class Adjustment(val label: String) {
+    Exposure("Exposure"),
+    Brightness("Brightness"),
+    Contrast("Contrast"),
+    Saturation("Saturation"),
 }
 
 /** One-shot messages surfaced as a snackbar. */

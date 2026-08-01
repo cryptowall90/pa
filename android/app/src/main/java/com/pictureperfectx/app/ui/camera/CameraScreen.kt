@@ -68,8 +68,10 @@ fun CameraScreen(
             CameraTopBar(
                 flashMode = state.flashMode,
                 adjustmentsOpen = state.showAdjustments,
+                filtersOpen = state.showFilters,
                 onCycleFlash = viewModel::onCycleFlash,
                 onToggleAdjustments = viewModel::onToggleAdjustments,
+                onToggleFilters = viewModel::onToggleFilters,
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp),
             )
 
@@ -83,30 +85,33 @@ fun CameraScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // Manual adjustments panel (exposure / brightness / contrast / saturation).
+                // Manual adjustments: chip row + a single slider (one adjustment at a time).
                 if (state.showAdjustments) {
                     AdjustPanel(
                         state = state,
+                        onSelect = viewModel::onSelectAdjustment,
                         onExposure = viewModel::onExposureChanged,
                         onBrightness = viewModel::onBrightnessChanged,
                         onContrast = viewModel::onContrastChanged,
                         onSaturation = viewModel::onSaturationChanged,
                     )
                 }
-                // Intensity slider (0-100) appears only for real LUTs, not Original.
-                if (state.intensityEnabled) {
-                    IntensitySlider(
-                        filterName = state.selectedFilter?.displayName.orEmpty(),
-                        intensity = state.intensity,
-                        onIntensityChange = viewModel::onIntensityChanged,
+                // Filters (carousel + intensity) — hideable for a full-screen camera.
+                if (state.showFilters) {
+                    if (state.intensityEnabled) {
+                        IntensitySlider(
+                            filterName = state.selectedFilter?.displayName.orEmpty(),
+                            intensity = state.intensity,
+                            onIntensityChange = viewModel::onIntensityChanged,
+                        )
+                    }
+                    FilterCarousel(
+                        filters = state.filters,
+                        selectedFilterId = state.selectedFilterId,
+                        onFilterSelected = viewModel::onFilterSelected,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                FilterCarousel(
-                    filters = state.filters,
-                    selectedFilterId = state.selectedFilterId,
-                    onFilterSelected = viewModel::onFilterSelected,
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 CameraControls(
                     isSaving = state.isSaving,
                     lastSavedThumbUri = state.lastSavedThumbUri,
