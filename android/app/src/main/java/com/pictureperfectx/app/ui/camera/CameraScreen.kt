@@ -37,7 +37,6 @@ fun CameraScreen(
     viewModel: CameraViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val previewSnapshot by viewModel.controller.previewSnapshot.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -89,7 +88,6 @@ fun CameraScreen(
                 FilterCarousel(
                     filters = state.filters,
                     selectedFilterId = state.selectedFilterId,
-                    previewSource = previewSnapshot,
                     onFilterSelected = viewModel::onFilterSelected,
                     modifier = Modifier.fillMaxWidth(),
                 )
