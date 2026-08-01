@@ -55,8 +55,8 @@ fun CameraScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // Step 1 + 2: live, GPU-filtered camera preview fills the screen.
-            GpuCameraPreview(
+            // Live, GPU-filtered camera preview (SurfaceProcessor effect) fills the screen.
+            CameraPreview(
                 controller = viewModel.controller,
                 modifier = Modifier.fillMaxSize(),
             )
