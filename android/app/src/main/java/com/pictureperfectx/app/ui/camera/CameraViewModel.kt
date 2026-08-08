@@ -199,7 +199,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
             val raw = result.dngUri.toString()
             // A DNG carries no look, so it's always indexed as Original rather than claiming the
             // active filter was applied to unprocessed sensor data.
-            val rawEntity = entity(raw, result.dngName, FilterCatalog.original, result.width, result.height, raw)
+            val rawEntity = entity(
+                raw, result.dngName, FilterCatalog.original, result.width, result.height, raw, result.proxyPath,
+            )
 
             if (jpeg != null) {
                 // RAW+JPEG writes two files, so the app gallery gets two independent entries to
@@ -227,6 +229,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         width: Int,
         height: Int,
         rawUri: String?,
+        proxyUri: String? = null,
     ) = PhotoEntity(
         uri = uri,
         displayName = displayName,
@@ -236,6 +239,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         width = width,
         height = height,
         rawUri = rawUri,
+        proxyUri = proxyUri,
     )
 
     private fun savedMessage(result: CaptureResult): String = when {

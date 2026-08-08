@@ -74,8 +74,13 @@ Fully native Kotlin. No cross-platform runtime.
 - `RAW+JPEG` writes two files, so it produces **two gallery entries** mirroring the phone gallery:
   the DNG on its own, and the filtered JPEG as an ordinary editable photo. Deleting one leaves the
   other.
-- DNG entries carry a **`RAW` badge**. They have no JPEG to show, so their tile falls back to the
-  file's embedded preview.
+- DNG entries carry a **`RAW` badge**.
+- **RAW shots stay sharp in the app.** Android's `DngCreator` caps a DNG's embedded preview at
+  **256 px**, and phones that can't demosaic RAW have nothing better to show — so a RAW-only capture
+  also writes a full-resolution, **unfiltered** JPEG into app-private storage (`capture/ProxyStore.kt`).
+  It never appears in the phone's gallery, the DNG is untouched, and it's what the grid, viewer and
+  both editors actually draw. It's deleted with its gallery entry. Where a lens can't do RAW+JPEG,
+  RAW-only still works — just without the proxy.
 - **RAW photos can be edited.** Android's Java decoders don't guarantee DNG support, so the editor
   attempts a full decode and falls back to the embedded preview, telling you when that means the
   saved photo will be lower resolution. Edits always save as a **new JPEG** — a DNG is never

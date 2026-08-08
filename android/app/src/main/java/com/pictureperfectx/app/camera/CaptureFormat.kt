@@ -43,8 +43,11 @@ sealed interface CaptureResult {
     data class Jpeg(val bitmap: Bitmap, val filter: Filter) : CaptureResult
 
     /**
-     * A DNG already written to MediaStore by CameraX. [jpeg] carries the filtered companion still
-     * in RAW+JPEG mode and is null when only RAW was requested.
+     * A DNG already written to MediaStore by CameraX.
+     *
+     * [jpeg] carries the filtered companion still in RAW+JPEG mode. [proxyPath] points at the
+     * app-private, unfiltered full-resolution stand-in written for a RAW-only shot — a DNG's own
+     * embedded preview tops out at 256px, so without it the photo can only be shown soft.
      */
     data class Raw(
         val dngUri: Uri,
@@ -52,5 +55,6 @@ sealed interface CaptureResult {
         val width: Int,
         val height: Int,
         val jpeg: Jpeg?,
+        val proxyPath: String? = null,
     ) : CaptureResult
 }

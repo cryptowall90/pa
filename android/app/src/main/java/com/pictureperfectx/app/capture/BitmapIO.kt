@@ -21,14 +21,32 @@ object BitmapIO {
     /**
      * Load [uri] for editing, falling back to a RAW file's embedded preview.
      *
-     * Android's Java decoders don't guarantee DNG support — some builds ship a RAW codec and decode
-     * it at full size, others return null — so a failed decode drops to the embedded preview rather
-     * than leaving the caller with nothing. That preview is a *thumbnail*, hence [LoadedImage.degraded].
+     * Android's Java decoders don't guarantee DNG support — some builds ship a RAW codec, others
+     * quietly hand back the file's embedded thumbnail instead of demosaicing. A decode that
+     * *succeeds* is therefore not proof of quality, so the result is also judged on size: anything
+     * far smaller than the frame the file claims is reported as [LoadedImage.degraded].
      */
     fun loadForEdit(context: Context, uri: Uri, maxEdge: Int): LoadedImage? {
-        load(context, uri, maxEdge)?.let { return LoadedImage(it, degraded = false) }
+        load(context, uri, maxEdge)?.let { return LoadedImage(it, degraded = isUndersized(context, uri, it, maxEdge)) }
         val preview = RawPreview.thumbnail(context, uri, maxEdge) ?: return null
         return LoadedImage(preview, degraded = true)
+    }
+
+    /**
+     * True when a RAW decode came back far below what was asked for *and* below what the file holds.
+     *
+     * Only RAW is judged this way: downsampling a JPEG to [maxEdge] is the point of [load], not a
+     * failure. A DNG's embedded thumbnail is capped at 256px by the writer, so a "successful" decode
+     * at that size means the codec punted rather than demosaiced.
+     */
+    private fun isUndersized(context: Context, uri: Uri, decoded: Bitmap, maxEdge: Int): Boolean {
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        if (mime != PhotoSaver.MIME_DNG) return false
+        val (declaredWidth, declaredHeight) = RawPreview.dimensions(context, uri)
+        val declared = max(declaredWidth, declaredHeight)
+        if (declared <= 0) return false
+        val wanted = minOf(maxEdge, declared)
+        return max(decoded.width, decoded.height) < wanted / 2
     }
 
     /** Load [uri], downscaled so its longest edge is <= [maxEdge], with EXIF orientation applied. */

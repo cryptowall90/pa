@@ -87,9 +87,11 @@ private fun PhotoThumb(
     contentScale: ContentScale = ContentScale.Crop,
     previewPx: Int = RAW_THUMB_PX,
 ) {
-    if (!photo.isRawOnly) {
+    // A RAW capture with a private proxy has a real image to show; only a bare DNG needs the
+    // embedded-preview fallback.
+    if (!photo.isRawOnly || photo.proxyUri != null) {
         AsyncImage(
-            model = photo.uri,
+            model = photo.displayUri,
             contentDescription = photo.filterName,
             contentScale = contentScale,
             modifier = modifier,
@@ -262,8 +264,9 @@ fun GalleryScreen(
                 photos = photos,
                 startIndex = startIndex,
                 onClose = { viewingId = null },
-                onEdit = { photo -> onEdit(Uri.parse(photo.uri)) },
-                onPerfectEdit = { photo -> onPerfectEdit(Uri.parse(photo.uri)) },
+                // Editors get the sharpest source available, which for a RAW means its proxy.
+                onEdit = { photo -> onEdit(Uri.parse(photo.displayUri)) },
+                onPerfectEdit = { photo -> onPerfectEdit(Uri.parse(photo.displayUri)) },
                 onDelete = { photo -> confirmSingle = photo },
             )
         }

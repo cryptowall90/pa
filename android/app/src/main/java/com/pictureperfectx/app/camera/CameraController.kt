@@ -25,6 +25,7 @@ import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
 import com.pictureperfectx.app.capture.BitmapIO
 import com.pictureperfectx.app.capture.PhotoSaver
+import com.pictureperfectx.app.capture.ProxyStore
 import com.pictureperfectx.app.capture.RawPreview
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
@@ -91,6 +92,9 @@ class CameraController(context: Context) {
 
     /** Notified when a format had to be abandoned, so the UI can explain the fallback. */
     var onBindError: ((String) -> Unit)? = null
+
+    // What ImageCapture was actually built with, which decides how takePicture must be called.
+    private var boundOutputFormat: Int = ImageCapture.OUTPUT_FORMAT_JPEG
 
     private var currentFilter: Filter = FilterCatalog.original
     private var intensity: Float = 1f
@@ -192,6 +196,7 @@ class CameraController(context: Context) {
         return try {
             camera = provider.bindToLifecycle(owner, selector, group)
             imageCapture = capture
+            boundOutputFormat = outputFormatOf(format)
             true
         } catch (e: Exception) {
             Log.e(TAG, "Use case binding failed for $format", e)
@@ -285,9 +290,19 @@ class CameraController(context: Context) {
         rebindUseCases()
     }
 
+    /**
+     * RAW-only rides on the RAW+JPEG stream where the camera supports it, so the JPEG half can be
+     * kept as a private full-resolution proxy. Nothing extra reaches the user's gallery — a DNG's
+     * own preview is capped at 256px, which is all the app would otherwise have to show.
+     */
     private fun outputFormatOf(format: CaptureFormat): Int = when (format) {
         CaptureFormat.JPEG -> ImageCapture.OUTPUT_FORMAT_JPEG
-        CaptureFormat.RAW -> ImageCapture.OUTPUT_FORMAT_RAW
+        CaptureFormat.RAW ->
+            if (CaptureFormat.RAW_JPEG in availableFormats) {
+                ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+            } else {
+                ImageCapture.OUTPUT_FORMAT_RAW
+            }
         CaptureFormat.RAW_JPEG -> ImageCapture.OUTPUT_FORMAT_RAW_JPEG
     }
 
@@ -388,32 +403,94 @@ class CameraController(context: Context) {
         )
     }
 
-    /** RAW only: CameraX streams the DNG straight into MediaStore; there is nothing to filter. */
+    /**
+     * RAW only. Where the camera can do RAW+JPEG the shot rides on that stream so the JPEG half can
+     * be kept privately as a full-resolution proxy; otherwise CameraX just streams the DNG out and
+     * the app has only the file's own 256px preview to show.
+     */
     private fun captureRaw(
         capture: ImageCapture,
         stopTorch: () -> Unit,
         onResult: (CaptureResult) -> Unit,
         onFailure: (Throwable) -> Unit,
     ) {
-        val name = "${PhotoSaver.baseName()}.dng"
+        val base = PhotoSaver.baseName()
+        val name = "$base.dng"
+
+        if (boundOutputFormat != ImageCapture.OUTPUT_FORMAT_RAW_JPEG) {
+            capture.takePicture(
+                dngOutputOptions(name),
+                captureExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        stopTorch()
+                        val uri = outputFileResults.savedUri
+                        if (uri == null) {
+                            onFailure(IllegalStateException("RAW capture returned no URI"))
+                            return
+                        }
+                        val (w, h) = RawPreview.dimensions(appContext, uri)
+                        onResult(CaptureResult.Raw(uri, name, w, h, jpeg = null))
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        stopTorch()
+                        onFailure(exception)
+                    }
+                },
+            )
+            return
+        }
+
+        // The proxy is written unfiltered — the preview effect is off in RAW-only mode — so it shows
+        // what the DNG contains rather than a look the raw file never had.
+        val proxy = ProxyStore.newProxyFile(appContext, base)
+        val jpegTarget = proxy ?: File.createTempFile("ppx_proxy", ".jpg", appContext.cacheDir)
+        val jpegOptions = ImageCapture.OutputFileOptions.Builder(jpegTarget)
+            .setMetadata(ImageCapture.Metadata().apply { isReversedHorizontal = isFront() })
+            .build()
+
+        val pending = AtomicInteger(2)
+        val failed = AtomicBoolean(false)
+        var dngUri: Uri? = null
+
         capture.takePicture(
             dngOutputOptions(name),
+            jpegOptions,
             captureExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    outputFileResults.savedUri
+                        ?.takeIf { it.scheme == "content" }
+                        ?.let { dngUri = it }
+                    if (pending.decrementAndGet() > 0 || failed.get()) return
                     stopTorch()
-                    val uri = outputFileResults.savedUri
+                    val uri = dngUri
                     if (uri == null) {
+                        jpegTarget.delete()
                         onFailure(IllegalStateException("RAW capture returned no URI"))
                         return
                     }
                     val (w, h) = RawPreview.dimensions(appContext, uri)
-                    onResult(CaptureResult.Raw(uri, name, w, h, jpeg = null))
+                    if (proxy == null) jpegTarget.delete() // nowhere to keep it; RAW still saved
+                    onResult(
+                        CaptureResult.Raw(
+                            dngUri = uri,
+                            dngName = name,
+                            width = w,
+                            height = h,
+                            jpeg = null,
+                            proxyPath = proxy?.let { Uri.fromFile(it).toString() },
+                        ),
+                    )
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    stopTorch()
-                    onFailure(exception)
+                    if (failed.compareAndSet(false, true)) {
+                        stopTorch()
+                        jpegTarget.delete()
+                        onFailure(exception)
+                    }
                 }
             },
         )
