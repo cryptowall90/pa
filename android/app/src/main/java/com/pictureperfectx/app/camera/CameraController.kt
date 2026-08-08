@@ -498,8 +498,12 @@ class CameraController(context: Context) {
 
     /**
      * RAW+JPEG: the DNG goes to MediaStore, but CameraX writes the JPEG itself and knows nothing
-     * about our look — so that half lands in a cache file, gets rendered through the active filter,
-     * and is handed back for the caller to save. The callback fires once per file.
+     * about our look — so that half is rendered through the active filter and handed back for the
+     * caller to save. The callback fires once per file.
+     *
+     * CameraX's JPEG is *unfiltered*, which makes it the ideal display proxy for the DNG: it's
+     * full-resolution and shows exactly what the raw file holds. It's kept rather than discarded,
+     * so the RAW entry is sharp without a second capture or any extra stream.
      */
     private fun captureRawAndJpeg(
         capture: ImageCapture,
@@ -507,8 +511,10 @@ class CameraController(context: Context) {
         onResult: (CaptureResult) -> Unit,
         onFailure: (Throwable) -> Unit,
     ) {
-        val name = "${PhotoSaver.baseName()}.dng"
-        val temp = File.createTempFile("ppx_capture", ".jpg", appContext.cacheDir)
+        val base = PhotoSaver.baseName()
+        val name = "$base.dng"
+        val proxy = ProxyStore.newProxyFile(appContext, base)
+        val temp = proxy ?: File.createTempFile("ppx_capture", ".jpg", appContext.cacheDir)
         val jpegOptions = ImageCapture.OutputFileOptions.Builder(temp)
             .setMetadata(ImageCapture.Metadata().apply { isReversedHorizontal = isFront() })
             .build()
@@ -529,6 +535,7 @@ class CameraController(context: Context) {
                         ?.let { dngUri = it }
                     if (pending.decrementAndGet() > 0 || failed.get()) return
                     stopTorch()
+                    var keepProxy = false
                     try {
                         val uri = dngUri ?: error("RAW capture returned no URI")
                         val decoded = BitmapIO.load(appContext, Uri.fromFile(temp), CAPTURE_MAX_EDGE)
@@ -543,12 +550,15 @@ class CameraController(context: Context) {
                                 width = rawWidth,
                                 height = rawHeight,
                                 jpeg = CaptureResult.Jpeg(filtered, currentFilter),
+                                proxyPath = proxy?.let { Uri.fromFile(it).toString() },
                             ),
                         )
+                        keepProxy = proxy != null
                     } catch (e: Exception) {
                         onFailure(e)
                     } finally {
-                        temp.delete()
+                        // Nothing references the file unless it became a proxy for the RAW entry.
+                        if (!keepProxy) temp.delete()
                     }
                 }
 

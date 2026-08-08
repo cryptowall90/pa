@@ -76,11 +76,16 @@ Fully native Kotlin. No cross-platform runtime.
   other.
 - DNG entries carry a **`RAW` badge**.
 - **RAW shots stay sharp in the app.** Android's `DngCreator` caps a DNG's embedded preview at
-  **256 px**, and phones that can't demosaic RAW have nothing better to show — so a RAW-only capture
-  also writes a full-resolution, **unfiltered** JPEG into app-private storage (`capture/ProxyStore.kt`).
+  **256 px**, and phones that can't demosaic RAW have nothing better to show — so every RAW capture
+  keeps a full-resolution, **unfiltered** JPEG in app-private storage (`capture/ProxyStore.kt`).
   It never appears in the phone's gallery, the DNG is untouched, and it's what the grid, viewer and
-  both editors actually draw. It's deleted with its gallery entry. Where a lens can't do RAW+JPEG,
-  RAW-only still works — just without the proxy.
+  both editors actually draw — which is also what lets a RAW edit save at full resolution.
+  It's deleted with its gallery entry.
+  - In **RAW+JPEG** this is free: CameraX's own JPEG is unfiltered, so it's kept as the proxy
+    instead of being discarded after the filtered copy is made.
+  - In **RAW-only** the shot rides the RAW+JPEG stream to obtain the same file, with the JPEG half
+    routed to private storage rather than the gallery. Where a lens can't do RAW+JPEG, RAW-only
+    still works — just without a proxy.
 - **RAW photos can be edited.** Android's Java decoders don't guarantee DNG support, so the editor
   attempts a full decode and falls back to the embedded preview, telling you when that means the
   saved photo will be lower resolution. Edits always save as a **new JPEG** — a DNG is never
