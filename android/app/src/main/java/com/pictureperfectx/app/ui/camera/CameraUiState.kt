@@ -1,6 +1,7 @@
 package com.pictureperfectx.app.ui.camera
 
 import androidx.camera.core.ImageCapture
+import com.pictureperfectx.app.camera.CaptureFormat
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
 
@@ -9,9 +10,14 @@ data class CameraUiState(
     val selectedFilterId: String = Filter.ORIGINAL_ID,
     val intensity: Int = 100,               // 0-100 LUT strength
     val flashMode: Int = ImageCapture.FLASH_MODE_OFF,
+    val captureFormat: CaptureFormat = CaptureFormat.JPEG,
+    // Per-lens, and minus anything the camera refused to bind; hides the chip when there's no choice.
+    val availableFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG),
     val isFrontFacing: Boolean = false,
     val isSaving: Boolean = false,
     val lastSavedThumbUri: String? = null,
+    val showRawFilterNotice: Boolean = false, // "looks don't apply to RAW", until acknowledged
+    val bindMessage: String? = null,          // a format the camera turned down; sticks until read
     val showFilters: Boolean = true,         // filter carousel + intensity visibility
     // Manual controls
     val showAdjustments: Boolean = false,
@@ -32,6 +38,18 @@ data class CameraUiState(
 
     val exposureSupported: Boolean
         get() = exposureMax > exposureMin
+
+    /** Only worth showing the format chip when there is more than one format to pick. */
+    val formatSwitchable: Boolean
+        get() = availableFormats.size > 1
+
+    /**
+     * Whether the selected look and the post-processing sliders reach the saved file. False for
+     * RAW-only, where the DNG is unprocessed sensor data — the controls are shown disabled rather
+     * than silently doing nothing.
+     */
+    val looksApply: Boolean
+        get() = captureFormat.appliesLook
 }
 
 /** One manual adjustment, chosen one-at-a-time in the adjustments row. */

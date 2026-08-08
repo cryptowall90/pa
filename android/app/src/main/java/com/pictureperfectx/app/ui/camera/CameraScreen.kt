@@ -1,5 +1,7 @@
 package com.pictureperfectx.app.ui.camera
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,11 +20,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.ui.components.AdjustPanel
 import com.pictureperfectx.app.ui.components.CameraControls
+import com.pictureperfectx.app.ui.components.CameraNotice
 import com.pictureperfectx.app.ui.components.CameraTopBar
 import com.pictureperfectx.app.ui.components.FilterCarousel
 import com.pictureperfectx.app.ui.components.IntensitySlider
@@ -67,9 +71,12 @@ fun CameraScreen(
 
             CameraTopBar(
                 flashMode = state.flashMode,
+                captureFormat = state.captureFormat,
+                formatSwitchable = state.formatSwitchable,
                 adjustmentsOpen = state.showAdjustments,
                 filtersOpen = state.showFilters,
                 onCycleFlash = viewModel::onCycleFlash,
+                onCycleCaptureFormat = viewModel::onCycleCaptureFormat,
                 onToggleAdjustments = viewModel::onToggleAdjustments,
                 onToggleFilters = viewModel::onToggleFilters,
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp),
@@ -85,6 +92,19 @@ fun CameraScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                // A format the camera turned down, or the RAW caveat — both stay until acknowledged.
+                state.bindMessage?.let { message ->
+                    CameraNotice(text = message, onDismiss = viewModel::onDismissBindMessage)
+                }
+                if (state.showRawFilterNotice) {
+                    CameraNotice(
+                        text = "RAW saves unprocessed sensor data, so filters and the brightness, " +
+                            "contrast and saturation sliders don't apply. Exposure still does. " +
+                            "Shoot RAW+JPEG to get a filtered photo alongside the raw file.",
+                        onDismiss = viewModel::onDismissRawNotice,
+                        onNeverShowAgain = viewModel::onNeverShowRawNotice,
+                    )
+                }
                 // Manual adjustments: chip row + a single slider (one adjustment at a time).
                 if (state.showAdjustments) {
                     AdjustPanel(
@@ -96,21 +116,42 @@ fun CameraScreen(
                         onSaturation = viewModel::onSaturationChanged,
                     )
                 }
-                // Filters (carousel + intensity) — hideable for a full-screen camera.
+                // Filters (carousel + intensity) — hideable for a full-screen camera. In RAW-only
+                // they're shown dimmed and inert: the look would reach nothing, so disabling says
+                // more than silently ignoring taps.
                 if (state.showFilters) {
-                    if (state.intensityEnabled) {
-                        IntensitySlider(
-                            filterName = state.selectedFilter?.displayName.orEmpty(),
-                            intensity = state.intensity,
-                            onIntensityChange = viewModel::onIntensityChanged,
-                        )
+                    Box {
+                        Column(
+                            modifier = Modifier.alpha(if (state.looksApply) 1f else 0.35f),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            if (state.intensityEnabled) {
+                                IntensitySlider(
+                                    filterName = state.selectedFilter?.displayName.orEmpty(),
+                                    intensity = state.intensity,
+                                    onIntensityChange = viewModel::onIntensityChanged,
+                                )
+                            }
+                            FilterCarousel(
+                                filters = state.filters,
+                                selectedFilterId = state.selectedFilterId,
+                                onFilterSelected = viewModel::onFilterSelected,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (!state.looksApply) {
+                            Box(
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = {},
+                                    ),
+                            )
+                        }
                     }
-                    FilterCarousel(
-                        filters = state.filters,
-                        selectedFilterId = state.selectedFilterId,
-                        onFilterSelected = viewModel::onFilterSelected,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
                 }
                 CameraControls(
                     isSaving = state.isSaving,

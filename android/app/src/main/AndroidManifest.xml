@@ -3,6 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
+    <!-- RAW/DNG capture is offered when the lens supports it, but the app works fine without it. -->
+    <uses-feature android:name="android.hardware.camera.raw" android:required="false" />
 
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- WRITE_EXTERNAL_STORAGE only needed on API <= 28; MediaStore handles 29+. -->

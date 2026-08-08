@@ -4,10 +4,12 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
+import android.net.Uri
 import android.util.Log
 import android.util.Range
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
@@ -21,6 +23,9 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
 import androidx.lifecycle.LifecycleOwner
+import com.pictureperfectx.app.capture.BitmapIO
+import com.pictureperfectx.app.capture.PhotoSaver
+import com.pictureperfectx.app.capture.RawPreview
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.filter.FilterFactory
@@ -31,8 +36,11 @@ import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageLookupFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
+import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Owns the CameraX pipeline.
@@ -66,6 +74,24 @@ class CameraController(context: Context) {
     var flashMode: Int = ImageCapture.FLASH_MODE_OFF
         private set
 
+    /** What the shutter writes. Always one of [availableFormats]. */
+    var captureFormat: CaptureFormat = CaptureFormat.JPEG
+        private set
+
+    /**
+     * Formats this lens advertises. Everything reported stays selectable even if a binding once
+     * failed — hiding a format forever meant one bad attempt removed it for good, with no way to
+     * retry. RAW is commonly back-camera only.
+     */
+    var availableFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG)
+        private set
+
+    /** Notified on the main thread after each binding, since format support is per-lens. */
+    var onFormatsChanged: ((Set<CaptureFormat>, CaptureFormat) -> Unit)? = null
+
+    /** Notified when a format had to be abandoned, so the UI can explain the fallback. */
+    var onBindError: ((String) -> Unit)? = null
+
     private var currentFilter: Filter = FilterCatalog.original
     private var intensity: Float = 1f
 
@@ -92,35 +118,87 @@ class CameraController(context: Context) {
         val provider = cameraProvider ?: return
         val owner = boundLifecycleOwner ?: return
         val sp = surfaceProvider ?: return
-        provider.unbindAll()
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        val preview = Preview.Builder().build().also { it.setSurfaceProvider(sp) }
-        val capture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setFlashMode(imageFlashMode())
-            .build()
-        imageCapture = capture
+        // Format support is per-lens and the output format is fixed when ImageCapture is built, so
+        // it's resolved fresh on every binding. This pre-bind guess picks the first camera matching
+        // the selector; it's corrected below from the camera actually bound.
+        availableFormats = queryReportedFormats(cameraInfoFor(provider, selector))
+        if (captureFormat !in availableFormats) captureFormat = CaptureFormat.JPEG
 
-        val effect = PreviewLutEffect(processor.executor, processor)
-        val group = UseCaseGroup.Builder()
-            .addUseCase(preview)
-            .addUseCase(capture)
-            .addEffect(effect)
-            .build()
-
-        try {
-            camera = provider.bindToLifecycle(owner, selector, group)
-        } catch (e: Exception) {
-            Log.e(TAG, "Use case binding failed", e)
+        val rejected = captureFormat
+        if (!tryBind(provider, owner, sp, selector, rejected) && rejected.writesRaw) {
+            // A camera that advertises a format can still refuse the resulting stream combination.
+            // Drop back to JPEG and bind again: leaving the session unbound after unbindAll() is
+            // what froze the viewfinder. Only RAW gets this treatment — a JPEG failure has nothing
+            // to fall back to and is likely transient. The format stays selectable so it can be
+            // retried; only this attempt is abandoned.
+            captureFormat = CaptureFormat.JPEG
+            onBindError?.invoke("${rejected.label} isn't available on this camera — switched to JPEG")
+            tryBind(provider, owner, sp, selector, CaptureFormat.JPEG)
         }
+
+        // The bound camera is authoritative: on multi-camera devices the pre-bind guess above can
+        // describe a different physical sensor than the one CameraX actually opened.
+        camera?.cameraInfo?.let { availableFormats = queryReportedFormats(it) }
+
         // Re-assert the current look + adjustments on the processor for the fresh binding.
         processor.setLut(currentFilter.lutAsset)
         processor.setIntensity(intensity)
         processor.setBrightness(brightnessF)
         processor.setContrast(contrastF)
         processor.setSaturation(saturationF)
+        onFormatsChanged?.invoke(availableFormats, captureFormat)
     }
+
+    /**
+     * Binds preview + capture for [format], returning false if the device rejects the combination.
+     * On success [camera] and [imageCapture] point at the new session.
+     */
+    private fun tryBind(
+        provider: ProcessCameraProvider,
+        owner: LifecycleOwner,
+        sp: Preview.SurfaceProvider,
+        selector: CameraSelector,
+        format: CaptureFormat,
+    ): Boolean {
+        provider.unbindAll()
+        val preview = Preview.Builder().build().also { it.setSurfaceProvider(sp) }
+        val capture = ImageCapture.Builder()
+            // Low-latency capture opts into zero-shutter-lag paths that conflict with RAW on many
+            // devices — and someone shooting RAW wants the best frame, not the fastest one.
+            .setCaptureMode(
+                if (format.writesRaw) {
+                    ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+                } else {
+                    ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                },
+            )
+            .setFlashMode(imageFlashMode())
+            .setOutputFormat(outputFormatOf(format))
+            .build()
+
+        val group = UseCaseGroup.Builder()
+            .addUseCase(preview)
+            .addUseCase(capture)
+            .apply {
+                // RAW-only saves unprocessed sensor data, so the LUT would only be a preview that
+                // lies about the file. Leaving the effect off also drops a GPU stream from the
+                // session, which is what lets a full-size RAW stream bind at all on some cameras.
+                if (format.appliesLook) addEffect(PreviewLutEffect(processor.executor, processor))
+            }
+            .build()
+
+        return try {
+            camera = provider.bindToLifecycle(owner, selector, group)
+            imageCapture = capture
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Use case binding failed for $format", e)
+            false
+        }
+    }
+
 
     fun applyFilter(filter: Filter) {
         currentFilter = filter
@@ -198,6 +276,49 @@ class CameraController(context: Context) {
         rebindUseCases()
     }
 
+    // ---- Capture format (JPEG / RAW / RAW+JPEG) -------------------------------------------------
+
+    /** Selects what the shutter writes. The output format is baked into [ImageCapture], so rebind. */
+    fun setCaptureFormat(format: CaptureFormat) {
+        if (captureFormat == format || format !in availableFormats) return
+        captureFormat = format
+        rebindUseCases()
+    }
+
+    private fun outputFormatOf(format: CaptureFormat): Int = when (format) {
+        CaptureFormat.JPEG -> ImageCapture.OUTPUT_FORMAT_JPEG
+        CaptureFormat.RAW -> ImageCapture.OUTPUT_FORMAT_RAW
+        CaptureFormat.RAW_JPEG -> ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+    }
+
+    private fun cameraInfoFor(provider: ProcessCameraProvider, selector: CameraSelector): CameraInfo? =
+        try {
+            selector.filter(provider.availableCameraInfos).firstOrNull()
+        } catch (e: Exception) {
+            Log.e(TAG, "Camera info lookup failed", e)
+            null
+        }
+
+    /**
+     * Which formats a camera advertises. RAW and RAW+JPEG are checked separately — a camera can
+     * support one without the other, so a single "does RAW" flag would offer a mode it will reject.
+     */
+    private fun queryReportedFormats(info: CameraInfo?): Set<CaptureFormat> {
+        val jpegOnly = setOf(CaptureFormat.JPEG)
+        if (info == null) return jpegOnly
+        return try {
+            val supported = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+            buildSet {
+                add(CaptureFormat.JPEG)
+                if (ImageCapture.OUTPUT_FORMAT_RAW in supported) add(CaptureFormat.RAW)
+                if (ImageCapture.OUTPUT_FORMAT_RAW_JPEG in supported) add(CaptureFormat.RAW_JPEG)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Output format capability query failed", e)
+            jpegOnly
+        }
+    }
+
     /** Cycles OFF -> ON -> AUTO. Returns the new mode. */
     fun cycleFlash(): Int {
         flashMode = when (flashMode) {
@@ -218,15 +339,31 @@ class CameraController(context: Context) {
         if (flashMode == ImageCapture.FLASH_MODE_ON) ImageCapture.FLASH_MODE_OFF else flashMode
 
     /**
-     * Captures a full-resolution still and renders it through the selected look + adjustments on a
-     * background thread, delivering the finished [Bitmap] via [onResult] (also off the main thread).
+     * Captures a full-resolution still in the selected [captureFormat] and delivers the outcome via
+     * [onResult], off the main thread. JPEGs are rendered through the active look + adjustments;
+     * DNGs are written by CameraX exactly as the sensor saw them.
      */
-    fun capture(onResult: (Bitmap, Filter) -> Unit, onFailure: (Throwable) -> Unit) {
+    fun capture(onResult: (CaptureResult) -> Unit, onFailure: (Throwable) -> Unit) {
         val capture = imageCapture ?: return onFailure(IllegalStateException("Camera not ready"))
         // "On" -> light the torch for the duration of the shot so the flash always fires.
         val useTorch = flashMode == ImageCapture.FLASH_MODE_ON
         if (useTorch) runCatching { camera?.cameraControl?.enableTorch(true) }
         val stopTorch = { if (useTorch) runCatching { camera?.cameraControl?.enableTorch(false) } }
+
+        when (captureFormat) {
+            CaptureFormat.JPEG -> captureJpeg(capture, stopTorch, onResult, onFailure)
+            CaptureFormat.RAW -> captureRaw(capture, stopTorch, onResult, onFailure)
+            CaptureFormat.RAW_JPEG -> captureRawAndJpeg(capture, stopTorch, onResult, onFailure)
+        }
+    }
+
+    /** JPEG only: keep the fast in-memory path, filtering the frame before it ever hits disk. */
+    private fun captureJpeg(
+        capture: ImageCapture,
+        stopTorch: () -> Unit,
+        onResult: (CaptureResult) -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ) {
         capture.takePicture(
             captureExecutor,
             object : ImageCapture.OnImageCapturedCallback() {
@@ -234,7 +371,7 @@ class CameraController(context: Context) {
                     try {
                         val oriented = image.toOrientedBitmap(isFront())
                         val filtered = captureGpuImage.getBitmapWithFilterApplied(oriented)
-                        onResult(filtered, currentFilter)
+                        onResult(CaptureResult.Jpeg(filtered, currentFilter))
                     } catch (e: Exception) {
                         onFailure(e)
                     } finally {
@@ -251,6 +388,111 @@ class CameraController(context: Context) {
         )
     }
 
+    /** RAW only: CameraX streams the DNG straight into MediaStore; there is nothing to filter. */
+    private fun captureRaw(
+        capture: ImageCapture,
+        stopTorch: () -> Unit,
+        onResult: (CaptureResult) -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ) {
+        val name = "${PhotoSaver.baseName()}.dng"
+        capture.takePicture(
+            dngOutputOptions(name),
+            captureExecutor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    stopTorch()
+                    val uri = outputFileResults.savedUri
+                    if (uri == null) {
+                        onFailure(IllegalStateException("RAW capture returned no URI"))
+                        return
+                    }
+                    val (w, h) = RawPreview.dimensions(appContext, uri)
+                    onResult(CaptureResult.Raw(uri, name, w, h, jpeg = null))
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    stopTorch()
+                    onFailure(exception)
+                }
+            },
+        )
+    }
+
+    /**
+     * RAW+JPEG: the DNG goes to MediaStore, but CameraX writes the JPEG itself and knows nothing
+     * about our look — so that half lands in a cache file, gets rendered through the active filter,
+     * and is handed back for the caller to save. The callback fires once per file.
+     */
+    private fun captureRawAndJpeg(
+        capture: ImageCapture,
+        stopTorch: () -> Unit,
+        onResult: (CaptureResult) -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ) {
+        val name = "${PhotoSaver.baseName()}.dng"
+        val temp = File.createTempFile("ppx_capture", ".jpg", appContext.cacheDir)
+        val jpegOptions = ImageCapture.OutputFileOptions.Builder(temp)
+            .setMetadata(ImageCapture.Metadata().apply { isReversedHorizontal = isFront() })
+            .build()
+
+        val pending = AtomicInteger(2)
+        val failed = AtomicBoolean(false)
+        var dngUri: Uri? = null
+
+        capture.takePicture(
+            dngOutputOptions(name),
+            jpegOptions,
+            captureExecutor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    // Only the MediaStore-backed half reports a content URI; the JPEG went to a file.
+                    outputFileResults.savedUri
+                        ?.takeIf { it.scheme == "content" }
+                        ?.let { dngUri = it }
+                    if (pending.decrementAndGet() > 0 || failed.get()) return
+                    stopTorch()
+                    try {
+                        val uri = dngUri ?: error("RAW capture returned no URI")
+                        val decoded = BitmapIO.load(appContext, Uri.fromFile(temp), CAPTURE_MAX_EDGE)
+                            ?: error("Could not decode the captured JPEG")
+                        val filtered = captureGpuImage.getBitmapWithFilterApplied(decoded)
+                        // Dimensions describe the DNG; the JPEG's come from its own bitmap.
+                        val (rawWidth, rawHeight) = RawPreview.dimensions(appContext, uri)
+                        onResult(
+                            CaptureResult.Raw(
+                                dngUri = uri,
+                                dngName = name,
+                                width = rawWidth,
+                                height = rawHeight,
+                                jpeg = CaptureResult.Jpeg(filtered, currentFilter),
+                            ),
+                        )
+                    } catch (e: Exception) {
+                        onFailure(e)
+                    } finally {
+                        temp.delete()
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    if (failed.compareAndSet(false, true)) {
+                        stopTorch()
+                        temp.delete()
+                        onFailure(exception)
+                    }
+                }
+            },
+        )
+    }
+
+    private fun dngOutputOptions(displayName: String): ImageCapture.OutputFileOptions =
+        ImageCapture.OutputFileOptions.Builder(
+            appContext.contentResolver,
+            PhotoSaver.imageCollection(),
+            PhotoSaver.valuesFor(displayName, PhotoSaver.MIME_DNG),
+        ).setMetadata(ImageCapture.Metadata().apply { isReversedHorizontal = isFront() }).build()
+
     fun release() {
         processor.release()
         captureExecutor.shutdown()
@@ -261,6 +503,8 @@ class CameraController(context: Context) {
 
     companion object {
         private const val TAG = "CameraController"
+        // Full-res for any phone sensor, while capping the decode of an absurdly large frame.
+        private const val CAPTURE_MAX_EDGE = 8192
     }
 }
 

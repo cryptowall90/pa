@@ -1,12 +1,12 @@
 package com.pictureperfectx.app.ui.camera
 
 import android.app.Application
-import android.graphics.Bitmap
 import androidx.camera.core.CameraSelector
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pictureperfectx.app.PicturePerfectApp
 import com.pictureperfectx.app.camera.CameraController
+import com.pictureperfectx.app.camera.CaptureResult
 import com.pictureperfectx.app.capture.PhotoSaver
 import com.pictureperfectx.app.data.PhotoEntity
 import com.pictureperfectx.app.filter.Filter
@@ -26,6 +26,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val controller = CameraController(app)
 
     private val repository = (app as PicturePerfectApp).photoRepository
+    private val prefs = (app as PicturePerfectApp).userPrefs
 
     private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()
@@ -34,6 +35,20 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val events = _events.receiveAsFlow()
 
     init {
+        // Format support is only known once a lens is bound, and changes when the lens does.
+        controller.onFormatsChanged = { formats, active ->
+            _state.update {
+                it.copy(
+                    availableFormats = formats,
+                    captureFormat = active,
+                    // A fallback to JPEG makes the RAW caveat irrelevant.
+                    showRawFilterNotice = it.showRawFilterNotice && !active.appliesLook,
+                )
+            }
+        }
+        // A refused format used to freeze the preview, then only flashed a snackbar that was easy
+        // to miss. It now sits on screen until the user acknowledges it.
+        controller.onBindError = { message -> _state.update { it.copy(bindMessage = message) } }
         controller.applyFilter(FilterCatalog.original)
         // Load the 100-LUT pack off the main thread, then publish it to the UI.
         viewModelScope.launch {
@@ -62,6 +77,28 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         val mode = controller.cycleFlash()
         _state.update { it.copy(flashMode = mode) }
     }
+
+    /** Cycles through the formats this lens can actually deliver. */
+    fun onCycleCaptureFormat() {
+        controller.setCaptureFormat(controller.captureFormat.next(controller.availableFormats))
+        val format = controller.captureFormat
+        _state.update {
+            it.copy(
+                captureFormat = format,
+                // Entering RAW-only silently disables the looks, so say so once.
+                showRawFilterNotice = !format.appliesLook && !prefs.rawFilterNoticeDismissed,
+            )
+        }
+    }
+
+    fun onDismissRawNotice() = _state.update { it.copy(showRawFilterNotice = false) }
+
+    fun onNeverShowRawNotice() {
+        prefs.rawFilterNoticeDismissed = true
+        _state.update { it.copy(showRawFilterNotice = false) }
+    }
+
+    fun onDismissBindMessage() = _state.update { it.copy(bindMessage = null) }
 
     // ---- Manual controls -----------------------------------------------------------------------
 
@@ -122,7 +159,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.isSaving) return
         _state.update { it.copy(isSaving = true) }
         controller.capture(
-            onResult = { bitmap, filter -> persist(bitmap, filter) },
+            onResult = { result -> persist(result) },
             onFailure = { throwable ->
                 _state.update { it.copy(isSaving = false) }
                 emit(CameraEvent.Error(throwable.message ?: "Capture failed"))
@@ -130,33 +167,81 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private fun persist(bitmap: Bitmap, filter: Filter) {
+    private fun persist(result: CaptureResult) {
         viewModelScope.launch {
+            val bitmap = when (result) {
+                is CaptureResult.Jpeg -> result.bitmap
+                is CaptureResult.Raw -> result.jpeg?.bitmap
+            }
             try {
-                val saved = withContext(Dispatchers.IO) {
-                    val result = PhotoSaver.save(getApplication(), bitmap)
-                    repository.record(
-                        PhotoEntity(
-                            uri = result.uri.toString(),
-                            displayName = result.displayName,
-                            filterId = filter.id,
-                            filterName = filter.displayName,
-                            lensFacing = if (controller.lensFacing == CameraSelector.LENS_FACING_FRONT) "front" else "back",
-                            width = result.width,
-                            height = result.height,
-                        ),
-                    )
-                    result
-                }
-                _state.update { it.copy(isSaving = false, lastSavedThumbUri = saved.uri.toString()) }
-                emit(CameraEvent.Saved("Saved to your gallery"))
+                val indexed = withContext(Dispatchers.IO) { record(result) }
+                _state.update { it.copy(isSaving = false, lastSavedThumbUri = indexed) }
+                emit(CameraEvent.Saved(savedMessage(result)))
             } catch (e: Exception) {
                 _state.update { it.copy(isSaving = false) }
                 emit(CameraEvent.Error(e.message ?: "Couldn't save photo"))
             } finally {
-                if (!bitmap.isRecycled) bitmap.recycle()
+                if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
             }
         }
+    }
+
+    /** Writes the capture to storage + the Room index, returning the URI the gallery should show. */
+    private suspend fun record(result: CaptureResult): String = when (result) {
+        is CaptureResult.Jpeg -> {
+            val saved = PhotoSaver.save(getApplication(), result.bitmap)
+            repository.record(entity(saved.uri.toString(), saved.displayName, result.filter, saved.width, saved.height, null))
+            saved.uri.toString()
+        }
+
+        is CaptureResult.Raw -> {
+            val jpeg = result.jpeg
+            val raw = result.dngUri.toString()
+            // A DNG carries no look, so it's always indexed as Original rather than claiming the
+            // active filter was applied to unprocessed sensor data.
+            val rawEntity = entity(raw, result.dngName, FilterCatalog.original, result.width, result.height, raw)
+
+            if (jpeg != null) {
+                // RAW+JPEG writes two files, so the app gallery gets two independent entries to
+                // match the phone gallery: the DNG on its own, and the filtered JPEG as an ordinary
+                // editable photo. The DNG is inserted first so the JPEG takes the higher row id and
+                // sorts ahead of it when their timestamps tie.
+                repository.record(rawEntity)
+                val name = result.dngName.removeSuffix(".dng") + ".jpg"
+                val saved = PhotoSaver.save(getApplication(), jpeg.bitmap, name)
+                repository.record(
+                    entity(saved.uri.toString(), saved.displayName, jpeg.filter, saved.width, saved.height, null),
+                )
+                saved.uri.toString()
+            } else {
+                repository.record(rawEntity)
+                raw
+            }
+        }
+    }
+
+    private fun entity(
+        uri: String,
+        displayName: String,
+        filter: Filter,
+        width: Int,
+        height: Int,
+        rawUri: String?,
+    ) = PhotoEntity(
+        uri = uri,
+        displayName = displayName,
+        filterId = filter.id,
+        filterName = filter.displayName,
+        lensFacing = if (controller.lensFacing == CameraSelector.LENS_FACING_FRONT) "front" else "back",
+        width = width,
+        height = height,
+        rawUri = rawUri,
+    )
+
+    private fun savedMessage(result: CaptureResult): String = when {
+        result !is CaptureResult.Raw -> "Saved to your gallery"
+        result.jpeg != null -> "Saved RAW + JPEG to your gallery"
+        else -> "Saved RAW to your gallery"
     }
 
     private fun emit(event: CameraEvent) {
