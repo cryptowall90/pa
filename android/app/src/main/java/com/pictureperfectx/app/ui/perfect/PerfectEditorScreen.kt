@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,12 +22,16 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,7 +51,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -61,6 +68,8 @@ import com.pictureperfectx.app.capture.AspectRatio
 import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.ToneAdjustments
 import com.pictureperfectx.app.capture.ToneBand
+import com.pictureperfectx.app.layers.BlendMode
+import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.ui.components.CameraNotice
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -106,6 +115,20 @@ fun PerfectEditorScreen(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
+                IconButton(onClick = viewModel::onUndo, enabled = state.canUndo) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Undo",
+                        tint = if (state.canUndo) Color.White else Color(0x55FFFFFF),
+                    )
+                }
+                IconButton(onClick = viewModel::onRedo, enabled = state.canRedo) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Redo",
+                        tint = if (state.canRedo) Color.White else Color(0x55FFFFFF),
+                    )
+                }
                 IconButton(onClick = viewModel::onReset, enabled = state.ready) {
                     Icon(Icons.Filled.Refresh, contentDescription = "Reset", tint = Color.White)
                 }
@@ -125,6 +148,8 @@ fun PerfectEditorScreen(
             CropStage(
                 state = state,
                 onCropChanged = viewModel::onCropChanged,
+                onPaint = viewModel::onPaintMask,
+                onStrokeEnd = viewModel::endStroke,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
 
@@ -164,6 +189,8 @@ fun PerfectEditorScreen(
                         onSelectBand = viewModel::onSelectBand,
                         onChange = { value -> viewModel.onToneChanged(state.band, value) },
                     )
+
+                    PerfectTool.Layers -> LayersPanel(state = state, viewModel = viewModel)
                 }
             }
         }
@@ -175,6 +202,8 @@ fun PerfectEditorScreen(
 private fun CropStage(
     state: PerfectEditUiState,
     onCropChanged: (com.pictureperfectx.app.capture.CropRect) -> Unit,
+    onPaint: (Float, Float) -> Unit,
+    onStrokeEnd: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var stageSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -207,9 +236,17 @@ private fun CropStage(
             )
         }
 
-        // The crop frame would only get in the way while judging tone, so it's crop-mode only.
-        if (state.tool == PerfectTool.Crop) {
-            CropOverlay(
+        when {
+            // Painting takes over the drag gesture rather than competing with the crop frame.
+            state.canPaintMask -> MaskPaintSurface(
+                imageBounds = bounds,
+                onPaint = onPaint,
+                onStrokeEnd = onStrokeEnd,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            // The crop frame would only get in the way while judging tone, so it's crop-mode only.
+            state.tool == PerfectTool.Crop -> CropOverlay(
                 crop = state.geometry.crop,
                 imageBounds = bounds,
                 lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
@@ -219,6 +256,38 @@ private fun CropStage(
             )
         }
     }
+}
+
+/**
+ * Turns drags into mask dabs. Touch points are converted against [imageBounds] — where the photo
+ * actually sits after letterboxing — rather than the composable's own size, so a stroke lands under
+ * the finger instead of being offset by the empty margins.
+ */
+@Composable
+private fun MaskPaintSurface(
+    imageBounds: Rect,
+    onPaint: (Float, Float) -> Unit,
+    onStrokeEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.pointerInput(imageBounds) {
+            if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@pointerInput
+            fun emit(position: Offset) {
+                val x = (position.x - imageBounds.left) / imageBounds.width
+                val y = (position.y - imageBounds.top) / imageBounds.height
+                if (x in 0f..1f && y in 0f..1f) onPaint(x, y)
+            }
+            detectDragGestures(
+                onDragStart = { position -> emit(position) },
+                onDragEnd = onStrokeEnd,
+                onDragCancel = onStrokeEnd,
+            ) { change, _ ->
+                change.consume()
+                emit(change.position)
+            }
+        },
+    )
 }
 
 /** Where a Fit-scaled image of [imageWidth] x [imageHeight] lands inside the container. */
@@ -327,6 +396,148 @@ private fun TonePanel(
             )
         }
     }
+}
+
+/**
+ * The layer stack. Listed **top-down** — the document stores bottom-first so index 0 sits nearest
+ * the photo, and showing it unreversed would read upside down.
+ */
+@Composable
+private fun LayersPanel(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+    val selected = state.document.selected
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0x59000000))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PanelChip("+ Tone", onClick = viewModel::onAddToneLayer)
+            PanelChip("+ Blur", onClick = viewModel::onAddBlurLayer)
+        }
+
+        if (state.document.isEmpty) {
+            Text(
+                text = "Add a layer, then paint on the photo to choose where it applies.",
+                color = Color(0xAAFFFFFF),
+                fontSize = 11.sp,
+            )
+            return@Column
+        }
+
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.document.topDown, key = { it.id }) { layer ->
+                LayerChip(
+                    layer = layer,
+                    isSelected = layer.id == selected?.id,
+                    onSelect = { viewModel.onSelectLayer(layer.id) },
+                    onToggleVisible = { viewModel.onToggleLayerVisibility(layer.id) },
+                )
+            }
+        }
+
+        selected?.let { layer ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Opacity", color = Color(0xCCFFFFFF), fontSize = 11.sp)
+                Slider(
+                    value = layer.opacity,
+                    onValueChange = { viewModel.onLayerOpacity(layer.id, it) },
+                    valueRange = 0f..1f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Brand,
+                        activeTrackColor = Brand,
+                        inactiveTrackColor = Color(0x55FFFFFF),
+                    ),
+                    modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 8.dp),
+                )
+                PanelChip(if (state.brushErases) "Erase" else "Paint", onClick = viewModel::onToggleBrushErase)
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "Brush", color = Color(0xCCFFFFFF), fontSize = 11.sp)
+                Slider(
+                    value = state.brushRadius,
+                    onValueChange = viewModel::onBrushRadius,
+                    valueRange = 0.02f..0.5f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Brand,
+                        activeTrackColor = Brand,
+                        inactiveTrackColor = Color(0x55FFFFFF),
+                    ),
+                    modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 8.dp),
+                )
+                PanelChip("Up") { viewModel.onMoveLayer(layer.id, up = true) }
+                PanelChip("Down") { viewModel.onMoveLayer(layer.id, up = false) }
+                PanelChip("Delete") { viewModel.onRemoveLayer(layer.id) }
+            }
+
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(BlendMode.entries.toList(), key = { it.name }) { mode ->
+                    PanelChip(
+                        label = mode.label,
+                        isSelected = mode == layer.blend,
+                        onClick = { viewModel.onLayerBlend(layer.id, mode) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LayerChip(
+    layer: Layer,
+    isSelected: Boolean,
+    onSelect: () -> Unit,
+    onToggleVisible: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isSelected) Brand else Color(0x22FFFFFF))
+            .border(
+                width = 1.dp,
+                color = if (isSelected) Brand else Color(0x33FFFFFF),
+                shape = RoundedCornerShape(10.dp),
+            )
+            .clickable(onClick = onSelect)
+            .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+    ) {
+        Text(
+            text = layer.name,
+            color = if (layer.isVisible) Color.White else Color(0x77FFFFFF),
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        IconButton(onClick = onToggleVisible, modifier = Modifier.size(28.dp)) {
+            Icon(
+                imageVector = if (layer.isVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                contentDescription = if (layer.isVisible) "Hide layer" else "Show layer",
+                tint = if (layer.isVisible) Color.White else Color(0x77FFFFFF),
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PanelChip(label: String, isSelected: Boolean = false, onClick: () -> Unit) {
+    Text(
+        text = label,
+        color = if (isSelected) Color.White else Color(0xCCFFFFFF),
+        fontSize = 11.sp,
+        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isSelected) Brand else Color(0x22FFFFFF))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
 }
 
 @Composable
