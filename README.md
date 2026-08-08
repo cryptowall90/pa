@@ -72,9 +72,19 @@ Fully native Kotlin. No cross-platform runtime.
 
 - A 3-column grid of every capture, read from the local **Room** index; tap the
   library button (bottom-left of the camera) to open it, tap a photo for a
-  full-screen viewer with delete.
-- Images load from their **MediaStore** content URIs via Coil. Deleting removes
-  both the Room row and the MediaStore file.
+  full-screen viewer.
+- **Multi-select delete**: long-press a photo to start selecting, tap more to add,
+  then delete — with a confirmation dialog. Deleting removes both the Room row and
+  the MediaStore file.
+- Images load from their **MediaStore** content URIs via Coil.
+
+### Editor (`ui/edit/`)
+
+- Re-edit a saved photo (Edit in the viewer) or **import a device photo** (the
+  system photo picker — no extra permission) into the editor.
+- Same looks + intensity + brightness/contrast/saturation as the camera, rendered
+  live via `capture/ImageEditor.kt` (GPUImage off-screen) and **saved as a new
+  photo** — the original is never modified. All on-device.
 
 ### Everything is on-device — zero server cost
 
