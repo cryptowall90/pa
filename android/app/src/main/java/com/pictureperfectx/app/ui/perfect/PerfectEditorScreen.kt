@@ -23,13 +23,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RotateLeft
-import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
@@ -171,8 +171,12 @@ fun PerfectEditorScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
                         ) {
-                            ToolButton(Icons.Filled.RotateLeft, "Rotate left") { viewModel.onRotate(false) }
-                            ToolButton(Icons.Filled.RotateRight, "Rotate right") { viewModel.onRotate(true) }
+                            ToolButton(Icons.AutoMirrored.Filled.RotateLeft, "Rotate left") {
+                                viewModel.onRotate(false)
+                            }
+                            ToolButton(Icons.AutoMirrored.Filled.RotateRight, "Rotate right") {
+                                viewModel.onRotate(true)
+                            }
                             ToolButton(Icons.Filled.Flip, "Flip horizontally") { viewModel.onFlip(true) }
                             ToolButton(
                                 icon = Icons.Filled.Flip,

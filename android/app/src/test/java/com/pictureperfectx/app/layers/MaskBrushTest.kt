@@ -84,10 +84,23 @@ class MaskBrushTest {
 
     @Test
     fun `the dab is round even when the grid is not square`() {
-        val mask = MaskBrush.paint(Mask.blank(64, 16), x = 0.5f, y = 0.5f, radius = 0.25f)
-        // Equal normalized distances along each axis should land on equal coverage.
-        val horizontal = mask.coverageAt(32 + 12, 8)
-        val vertical = mask.coverageAt(32, 8 + 3)
-        assertEquals(horizontal, vertical, 0.15f)
+        // A 4:1 grid: if the brush worked in cells rather than normalized units, the dab would come
+        // out as a stretched ellipse covering far more of one axis than the other.
+        val columns = 64
+        val rows = 16
+        val mask = MaskBrush.paint(Mask.blank(columns, rows), x = 0.5f, y = 0.5f, radius = 0.25f)
+
+        // Compare the *proportion* of each axis the dab covers. Sampling two hand-picked cells
+        // instead would be thrown off by the half-cell offset, which is a much larger fraction of
+        // the short axis's radius than of the long one's.
+        val paintedColumns = (0 until columns).count { mask.coverageAt(it, rows / 2) > 0f }
+        val paintedRows = (0 until rows).count { mask.coverageAt(columns / 2, it) > 0f }
+
+        assertEquals(
+            "the dab should span the same fraction of each axis",
+            paintedColumns.toFloat() / columns,
+            paintedRows.toFloat() / rows,
+            0.1f, // room for the coarse 16-row axis to quantize by a cell
+        )
     }
 }
