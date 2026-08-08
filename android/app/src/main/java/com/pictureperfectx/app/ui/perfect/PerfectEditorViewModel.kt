@@ -34,8 +34,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Which set of controls the editor is showing. */
-enum class PerfectTool(val label: String) { Crop("Crop"), Tone("Tone"), Layers("Layers") }
+/**
+ * Which set of controls the editor is showing. Everything that changes pixels is an effect layer,
+ * so there is no separate "tone" mode — that split was what made one word mean two different things.
+ */
+enum class PerfectTool(val label: String) { Crop("Crop"), Effects("Effects") }
+
+/** An effect the user can add, as offered by the effects picker. */
+enum class EffectKind(val label: String, val description: String) {
+    Tone("Tone", "Blacks, shadows, highlights and whites."),
+    Bokeh("Bokeh", "Blur the background behind your subject."),
+}
 
 data class PerfectEditUiState(
     val geometry: ImageGeometry = ImageGeometry(),
@@ -59,8 +68,8 @@ data class PerfectEditUiState(
     val canvasRatio: Float
         get() = canvas?.let { if (it.height > 0) it.width.toFloat() / it.height else 1f } ?: 1f
 
-    /** Painting only makes sense on a chosen layer, in the layers tool. */
-    val canPaintMask: Boolean get() = tool == PerfectTool.Layers && document.selected != null
+    /** Painting only makes sense on a chosen layer, while the effects tool is showing. */
+    val canPaintMask: Boolean get() = tool == PerfectTool.Effects && document.selected != null
 }
 
 /**
@@ -192,9 +201,16 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             val tone = _state.value.tone
             val document = _state.value.document
             val rendered = withContext(Dispatchers.Default) {
-                runCatching { composite(source, tone, document) }.getOrNull()
-            } ?: return@launch
-            _state.update { it.copy(canvas = rendered) }
+                runCatching { composite(source, tone, document) }
+            }
+            rendered.onSuccess { canvas -> _state.update { it.copy(canvas = canvas) } }
+            // Swallowing this left the previous canvas on screen, so a failed GPU pass and a layer
+            // that simply does nothing looked identical. Say which it was.
+            rendered.onFailure { error ->
+                _state.update {
+                    it.copy(notice = "That effect couldn't be rendered: ${error.message ?: "unknown error"}")
+                }
+            }
         }
     }
 
@@ -284,9 +300,21 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Layers ---------------------------------------------------------------------------------
 
-    fun onAddToneLayer() = commit(_state.value.document.add { Layer.Tone(it) })
-
-    fun onAddBlurLayer() = commit(_state.value.document.add { Layer.Blur(it) })
+    /**
+     * Adds an effect and selects it. The caller opens its settings straight away — a layer whose
+     * controls aren't immediately reachable is a layer that looks broken, which is exactly what
+     * happened before.
+     */
+    fun onAddEffect(kind: EffectKind) {
+        val document = when (kind) {
+            // Not neutral: a fresh layer must visibly do something, or adding it looks like a no-op.
+            EffectKind.Tone -> _state.value.document.add {
+                Layer.Tone(it, adjustments = ToneAdjustments(shadows = 25))
+            }
+            EffectKind.Bokeh -> _state.value.document.add { Layer.Blur(it, name = "Bokeh") }
+        }
+        commit(document)
+    }
 
     fun onSelectLayer(id: Long) = applyDocument(_state.value.document.select(id), record = false)
 
@@ -300,6 +328,38 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applyDocument(_state.value.document.setOpacity(id, opacity), record = false)
 
     fun onLayerBlend(id: Long, blend: BlendMode) = commit(_state.value.document.setBlend(id, blend))
+
+    /**
+     * Edits what a layer actually *does*, as opposed to how it's composited.
+     *
+     * `withCommon` deliberately can't reach a layer's payload, so these go through
+     * [Document.update] directly. Without them a Tone layer stays neutral for its whole life and
+     * quietly renders nothing — which also makes the mask brush look broken, since painting a
+     * mask onto a no-op layer changes nothing on screen.
+     */
+    fun onLayerToneChanged(id: Long, band: ToneBand, value: Int) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Tone) {
+                layer.copy(adjustments = layer.adjustments.with(band, value.coerceIn(-100, 100)))
+            } else {
+                layer
+            }
+        }
+        applyDocument(document, record = false)
+    }
+
+    fun onLayerBlurRadius(id: Long, radius: Int) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Blur) layer.copy(radius = radius.coerceIn(1, 60)) else layer
+        }
+        applyDocument(document, record = false)
+    }
+
+    /** Which tonal band a selected Tone layer's single slider is editing. */
+    fun onSelectLayerBand(band: ToneBand) = _state.update { it.copy(band = band) }
+
+    /** Slider drags don't each deserve an undo step; the gesture ending pushes one. */
+    fun commitLayerEdit() = commit(_state.value.document)
 
     fun onBrushRadius(radius: Float) = _state.update { it.copy(brushRadius = radius.coerceIn(0.02f, 0.5f)) }
 

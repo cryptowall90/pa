@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,12 +27,14 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +44,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -89,6 +93,8 @@ fun PerfectEditorScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    var showEffectPicker by remember { mutableStateOf(false) }
+    var showLayerSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(sourceUri) { viewModel.load(sourceUri) }
     LaunchedEffect(state.savedMessage) {
@@ -162,6 +168,14 @@ fun PerfectEditorScreen(
                 ToolSwitch(selected = state.tool, onSelect = viewModel::onSelectTool)
 
                 when (state.tool) {
+                    PerfectTool.Effects -> EffectsBar(
+                        state = state,
+                        onAddEffect = { showEffectPicker = true },
+                        onSelectLayer = viewModel::onSelectLayer,
+                        onOpenSettings = { showLayerSettings = true },
+                        onToggleVisible = viewModel::onToggleLayerVisibility,
+                    )
+
                     PerfectTool.Crop -> {
                         StraightenSlider(
                             degrees = state.geometry.straightenDegrees,
@@ -187,16 +201,32 @@ fun PerfectEditorScreen(
                         AspectRow(selected = state.geometry.aspect, onSelect = viewModel::onAspectSelected)
                     }
 
-                    PerfectTool.Tone -> TonePanel(
-                        tone = state.tone,
-                        band = state.band,
-                        onSelectBand = viewModel::onSelectBand,
-                        onChange = { value -> viewModel.onToneChanged(state.band, value) },
-                    )
-
-                    PerfectTool.Layers -> LayersPanel(state = state, viewModel = viewModel)
                 }
             }
+        }
+    }
+
+    if (showEffectPicker) {
+        EffectPickerDialog(
+            onPick = { kind ->
+                showEffectPicker = false
+                viewModel.onAddEffect(kind)
+                // Open its settings immediately: an effect whose controls aren't reachable is an
+                // effect that looks broken.
+                showLayerSettings = true
+            },
+            onDismiss = { showEffectPicker = false },
+        )
+    }
+
+    state.document.selected?.let { layer ->
+        if (showLayerSettings) {
+            LayerSettingsDialog(
+                layer = layer,
+                state = state,
+                viewModel = viewModel,
+                onDismiss = { showLayerSettings = false },
+            )
         }
     }
 }
@@ -403,92 +433,185 @@ private fun TonePanel(
 }
 
 /**
- * The layer stack. Listed **top-down** — the document stores bottom-first so index 0 sits nearest
- * the photo, and showing it unreversed would read upside down.
+ * The whole effects UI when nothing is selected: one button to add an effect, and chips for what's
+ * already there. Everything else opens on demand — the previous version stacked five rows of
+ * controls permanently, which ate the photo and buried the ones that mattered.
  */
 @Composable
-private fun LayersPanel(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
-    val selected = state.document.selected
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0x59000000))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+private fun EffectsBar(
+    state: PerfectEditUiState,
+    onAddEffect: () -> Unit,
+    onSelectLayer: (Long) -> Unit,
+    onOpenSettings: () -> Unit,
+    onToggleVisible: (Long) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PanelChip("+ Tone", onClick = viewModel::onAddToneLayer)
-            PanelChip("+ Blur", onClick = viewModel::onAddBlurLayer)
+        IconButton(onClick = onAddEffect, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = "Add an effect", tint = Brand)
         }
-
         if (state.document.isEmpty) {
             Text(
-                text = "Add a layer, then paint on the photo to choose where it applies.",
+                text = "Add an effect, then paint to choose where it applies.",
                 color = Color(0xAAFFFFFF),
-                fontSize = 11.sp,
+                fontSize = 12.sp,
             )
-            return@Column
-        }
-
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.document.topDown, key = { it.id }) { layer ->
-                LayerChip(
-                    layer = layer,
-                    isSelected = layer.id == selected?.id,
-                    onSelect = { viewModel.onSelectLayer(layer.id) },
-                    onToggleVisible = { viewModel.onToggleLayerVisibility(layer.id) },
-                )
-            }
-        }
-
-        selected?.let { layer ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "Opacity", color = Color(0xCCFFFFFF), fontSize = 11.sp)
-                Slider(
-                    value = layer.opacity,
-                    onValueChange = { viewModel.onLayerOpacity(layer.id, it) },
-                    valueRange = 0f..1f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Brand,
-                        activeTrackColor = Brand,
-                        inactiveTrackColor = Color(0x55FFFFFF),
-                    ),
-                    modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 8.dp),
-                )
-                PanelChip(if (state.brushErases) "Erase" else "Paint", onClick = viewModel::onToggleBrushErase)
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(text = "Brush", color = Color(0xCCFFFFFF), fontSize = 11.sp)
-                Slider(
-                    value = state.brushRadius,
-                    onValueChange = viewModel::onBrushRadius,
-                    valueRange = 0.02f..0.5f,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Brand,
-                        activeTrackColor = Brand,
-                        inactiveTrackColor = Color(0x55FFFFFF),
-                    ),
-                    modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 8.dp),
-                )
-                PanelChip("Up") { viewModel.onMoveLayer(layer.id, up = true) }
-                PanelChip("Down") { viewModel.onMoveLayer(layer.id, up = false) }
-                PanelChip("Delete") { viewModel.onRemoveLayer(layer.id) }
-            }
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(BlendMode.entries.toList(), key = { it.name }) { mode ->
-                    PanelChip(
-                        label = mode.label,
-                        isSelected = mode == layer.blend,
-                        onClick = { viewModel.onLayerBlend(layer.id, mode) },
+        } else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(state.document.topDown, key = { it.id }) { layer ->
+                    LayerChip(
+                        layer = layer,
+                        isSelected = layer.id == state.document.selectedId,
+                        // Tapping the already-selected layer opens its settings, so its controls
+                        // are always one tap away without living on screen.
+                        onSelect = {
+                            if (layer.id == state.document.selectedId) onOpenSettings() else onSelectLayer(layer.id)
+                        },
+                        onToggleVisible = { onToggleVisible(layer.id) },
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun EffectPickerDialog(onPick: (EffectKind) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add an effect") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                EffectKind.entries.forEach { kind ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onPick(kind) }
+                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                    ) {
+                        Text(kind.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Brand)
+                        Text(kind.description, fontSize = 13.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+/**
+ * Everything about one layer, opened from its chip. Crucially this includes the control that makes
+ * the layer *do* something — a tone layer's bands or a blur's radius. Their absence is what made
+ * layers look broken, and what made the mask brush look broken along with them.
+ */
+@Composable
+private fun LayerSettingsDialog(
+    layer: Layer,
+    state: PerfectEditUiState,
+    viewModel: PerfectEditorViewModel,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(layer.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                when (layer) {
+                    is Layer.Tone -> TonePanel(
+                        tone = layer.adjustments,
+                        band = state.band,
+                        onSelectBand = viewModel::onSelectLayerBand,
+                        onChange = { value -> viewModel.onLayerToneChanged(layer.id, state.band, value) },
+                    )
+
+                    is Layer.Blur -> LabelledSlider(
+                        label = "Blur",
+                        value = layer.radius.toFloat(),
+                        range = 1f..60f,
+                        readout = "${layer.radius}",
+                        onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
+                    )
+
+                    is Layer.Look -> Unit
+                }
+
+                LabelledSlider(
+                    label = "Opacity",
+                    value = layer.opacity,
+                    range = 0f..1f,
+                    readout = "${(layer.opacity * 100).roundToInt()}%",
+                    onChange = { viewModel.onLayerOpacity(layer.id, it) },
+                )
+                LabelledSlider(
+                    label = "Brush",
+                    value = state.brushRadius,
+                    range = 0.02f..0.5f,
+                    readout = if (state.brushErases) "Erase" else "Paint",
+                    onChange = viewModel::onBrushRadius,
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PanelChip(
+                        label = if (state.brushErases) "Erasing" else "Painting",
+                        isSelected = state.brushErases,
+                        onClick = viewModel::onToggleBrushErase,
+                    )
+                    PanelChip("Move up") { viewModel.onMoveLayer(layer.id, up = true) }
+                    PanelChip("Move down") { viewModel.onMoveLayer(layer.id, up = false) }
+                }
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(BlendMode.entries.toList(), key = { it.name }) { mode ->
+                        PanelChip(label = mode.label, isSelected = mode == layer.blend) {
+                            viewModel.onLayerBlend(layer.id, mode)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { viewModel.commitLayerEdit(); onDismiss() }) { Text("Done") }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.onRemoveLayer(layer.id); onDismiss() }) {
+                Text("Delete", color = Brand)
+            }
+        },
+    )
+}
+
+@Composable
+private fun LabelledSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    readout: String,
+    onChange: (Float) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(text = label, fontSize = 12.sp, modifier = Modifier.width(58.dp))
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = onChange,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = Brand,
+                activeTrackColor = Brand,
+                inactiveTrackColor = Color(0x55888888),
+            ),
+            modifier = Modifier.weight(1f).height(32.dp),
+        )
+        Text(
+            text = readout,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = Brand,
+            modifier = Modifier.padding(start = 8.dp).width(48.dp),
+        )
     }
 }
 
