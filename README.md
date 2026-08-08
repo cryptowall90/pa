@@ -61,17 +61,25 @@ Fully native Kotlin. No cross-platform runtime.
   into JPEGs only. In `RAW+JPEG` the DNG is saved untouched and the JPEG gets the active LUT.
 - DNGs are written by CameraX straight into `DCIM/PicturePerfectX` alongside the JPEGs, so they
   show up in the phone's gallery and import into desktop RAW tools.
+- **RAW-only shoots without the preview filter.** The LUT never reaches a DNG, so attaching it would
+  be a viewfinder that lies about the file — and dropping that GPU stream is also what lets a
+  full-size RAW stream bind on cameras that otherwise refuse it. In RAW-only the filter strip and the
+  brightness/contrast/saturation sliders are shown disabled, with a dismissible note explaining why.
+  **Exposure stays live**, because the sensor applies it and it genuinely changes the DNG.
 - **A refused format can never freeze the viewfinder.** A camera that advertises a format can still
-  reject the resulting stream combination; when that happens the app remembers it for that lens,
-  falls back to JPEG, rebinds, and says so in a snackbar. RAW also uses
+  reject the resulting stream combination; the app falls back to JPEG, rebinds, and shows a message
+  that stays until acknowledged. The format remains selectable so it can be retried. RAW also uses
   `CAPTURE_MODE_MAXIMIZE_QUALITY`, since low-latency capture opts into zero-shutter-lag paths that
   conflict with RAW on many devices.
 - `RAW+JPEG` writes two files, so it produces **two gallery entries** mirroring the phone gallery:
   the DNG on its own, and the filtered JPEG as an ordinary editable photo. Deleting one leaves the
   other.
 - DNG entries carry a **`RAW` badge**. They have no JPEG to show, so their tile falls back to the
-  file's embedded preview (Android ships no RAW decoder) — and the light editor hides its Edit
-  action for them rather than offering something it can't open.
+  file's embedded preview.
+- **RAW photos can be edited.** Android's Java decoders don't guarantee DNG support, so the editor
+  attempts a full decode and falls back to the embedded preview, telling you when that means the
+  saved photo will be lower resolution. Edits always save as a **new JPEG** — a DNG is never
+  written to.
 
 ### LUT pack + intensity (100 looks)
 
@@ -94,7 +102,8 @@ Fully native Kotlin. No cross-platform runtime.
 
 - A 3-column grid of every capture, read from the local **Room** index; tap the
   library button (bottom-left of the camera) to open it, tap a photo for a
-  full-screen viewer.
+  full-screen viewer, and **swipe left/right to move between photos** without
+  going back to the grid.
 - **Multi-select delete**: long-press a photo to start selecting, tap more to add,
   then delete — with a confirmation dialog. Delete removes the photo from the
   **app** gallery (its Room index row) only; the file stays on the device, so it

@@ -16,6 +16,8 @@ data class CameraUiState(
     val isFrontFacing: Boolean = false,
     val isSaving: Boolean = false,
     val lastSavedThumbUri: String? = null,
+    val showRawFilterNotice: Boolean = false, // "looks don't apply to RAW", until acknowledged
+    val bindMessage: String? = null,          // a format the camera turned down; sticks until read
     val showFilters: Boolean = true,         // filter carousel + intensity visibility
     // Manual controls
     val showAdjustments: Boolean = false,
@@ -40,6 +42,14 @@ data class CameraUiState(
     /** Only worth showing the format chip when there is more than one format to pick. */
     val formatSwitchable: Boolean
         get() = availableFormats.size > 1
+
+    /**
+     * Whether the selected look and the post-processing sliders reach the saved file. False for
+     * RAW-only, where the DNG is unprocessed sensor data — the controls are shown disabled rather
+     * than silently doing nothing.
+     */
+    val looksApply: Boolean
+        get() = captureFormat.appliesLook
 }
 
 /** One manual adjustment, chosen one-at-a-time in the adjustments row. */

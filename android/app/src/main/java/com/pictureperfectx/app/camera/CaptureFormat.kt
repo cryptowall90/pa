@@ -19,6 +19,13 @@ enum class CaptureFormat(val label: String) {
     val writesRaw: Boolean get() = this != JPEG
 
     /**
+     * Whether the selected look reaches the saved file. A RAW-only shot is pure sensor data, so the
+     * LUT and the post-processing adjustments apply to nothing — the viewfinder shows the frame
+     * unfiltered rather than promising a rendering that won't exist.
+     */
+    val appliesLook: Boolean get() = this != RAW
+
+    /**
      * The next format the user can actually shoot, cycling within [available] so the chip can never
      * land on a mode this camera has already refused.
      */

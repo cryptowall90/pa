@@ -9,8 +9,27 @@ import android.net.Uri
 import java.io.ByteArrayInputStream
 import kotlin.math.max
 
+/**
+ * A loaded source image. [degraded] is true when the real image couldn't be decoded and this is a
+ * lower-resolution stand-in — an editor saving it produces a smaller file than the original.
+ */
+data class LoadedImage(val bitmap: Bitmap, val degraded: Boolean)
+
 /** Loads bitmaps from content URIs, downscaled and rotated per EXIF so edits start upright. */
 object BitmapIO {
+
+    /**
+     * Load [uri] for editing, falling back to a RAW file's embedded preview.
+     *
+     * Android's Java decoders don't guarantee DNG support — some builds ship a RAW codec and decode
+     * it at full size, others return null — so a failed decode drops to the embedded preview rather
+     * than leaving the caller with nothing. That preview is a *thumbnail*, hence [LoadedImage.degraded].
+     */
+    fun loadForEdit(context: Context, uri: Uri, maxEdge: Int): LoadedImage? {
+        load(context, uri, maxEdge)?.let { return LoadedImage(it, degraded = false) }
+        val preview = RawPreview.thumbnail(context, uri, maxEdge) ?: return null
+        return LoadedImage(preview, degraded = true)
+    }
 
     /** Load [uri], downscaled so its longest edge is <= [maxEdge], with EXIF orientation applied. */
     fun load(context: Context, uri: Uri, maxEdge: Int): Bitmap? {

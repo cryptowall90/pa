@@ -26,6 +26,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val controller = CameraController(app)
 
     private val repository = (app as PicturePerfectApp).photoRepository
+    private val prefs = (app as PicturePerfectApp).userPrefs
 
     private val _state = MutableStateFlow(CameraUiState())
     val state: StateFlow<CameraUiState> = _state.asStateFlow()
@@ -36,10 +37,18 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // Format support is only known once a lens is bound, and changes when the lens does.
         controller.onFormatsChanged = { formats, active ->
-            _state.update { it.copy(availableFormats = formats, captureFormat = active) }
+            _state.update {
+                it.copy(
+                    availableFormats = formats,
+                    captureFormat = active,
+                    // A fallback to JPEG makes the RAW caveat irrelevant.
+                    showRawFilterNotice = it.showRawFilterNotice && !active.appliesLook,
+                )
+            }
         }
-        // A camera that refuses a format used to leave the preview frozen with no explanation.
-        controller.onBindError = { message -> emit(CameraEvent.Error(message)) }
+        // A refused format used to freeze the preview, then only flashed a snackbar that was easy
+        // to miss. It now sits on screen until the user acknowledges it.
+        controller.onBindError = { message -> _state.update { it.copy(bindMessage = message) } }
         controller.applyFilter(FilterCatalog.original)
         // Load the 100-LUT pack off the main thread, then publish it to the UI.
         viewModelScope.launch {
@@ -72,8 +81,24 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     /** Cycles through the formats this lens can actually deliver. */
     fun onCycleCaptureFormat() {
         controller.setCaptureFormat(controller.captureFormat.next(controller.availableFormats))
-        _state.update { it.copy(captureFormat = controller.captureFormat) }
+        val format = controller.captureFormat
+        _state.update {
+            it.copy(
+                captureFormat = format,
+                // Entering RAW-only silently disables the looks, so say so once.
+                showRawFilterNotice = !format.appliesLook && !prefs.rawFilterNoticeDismissed,
+            )
+        }
     }
+
+    fun onDismissRawNotice() = _state.update { it.copy(showRawFilterNotice = false) }
+
+    fun onNeverShowRawNotice() {
+        prefs.rawFilterNoticeDismissed = true
+        _state.update { it.copy(showRawFilterNotice = false) }
+    }
+
+    fun onDismissBindMessage() = _state.update { it.copy(bindMessage = null) }
 
     // ---- Manual controls -----------------------------------------------------------------------
 

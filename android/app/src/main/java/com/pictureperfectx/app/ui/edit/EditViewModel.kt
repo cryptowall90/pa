@@ -39,6 +39,7 @@ data class EditUiState(
     val isSaving: Boolean = false,
     val ready: Boolean = false,
     val savedMessage: String? = null,
+    val notice: String? = null,   // quality caveat or load failure, shown inline
 ) {
     val selectedFilter: Filter? get() = filters.firstOrNull { it.id == selectedFilterId }
     val intensityEnabled: Boolean get() = selectedFilter?.isOriginal == false
@@ -70,11 +71,11 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
 
     fun load(uri: Uri) {
         viewModelScope.launch {
-            val (full, preview) = withContext(Dispatchers.IO) {
-                val full = BitmapIO.load(getApplication(), uri, FULL_MAX_EDGE)
-                val preview = full?.let { scaleToMaxEdge(it, PREVIEW_MAX_EDGE) }
-                full to preview
+            val loaded = withContext(Dispatchers.IO) {
+                BitmapIO.loadForEdit(getApplication(), uri, FULL_MAX_EDGE)
             }
+            val full = loaded?.bitmap
+            val preview = full?.let { scaleToMaxEdge(it, PREVIEW_MAX_EDGE) }
             sourceFull = full
             sourcePreview = preview
             // Reset controls for a clean edit (the ViewModel is reused across sessions).
@@ -83,6 +84,13 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
                     ready = full != null,
                     preview = preview,
                     original = preview, // unedited, for hold-to-compare
+                    notice = when {
+                        loaded == null -> "This photo couldn't be opened for editing."
+                        loaded.degraded ->
+                            "This device can't decode the raw file, so you're editing its embedded " +
+                                "preview — the saved photo will be lower resolution than the original."
+                        else -> null
+                    },
                     selectedFilterId = Filter.ORIGINAL_ID,
                     intensity = 100,
                     selectedAdjustment = Adjustment.Exposure,
@@ -95,6 +103,8 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
             scheduleRender()
         }
     }
+
+    fun consumeNotice() = _state.update { it.copy(notice = null) }
 
     fun onFilterSelected(filter: Filter) {
         _state.update { it.copy(selectedFilterId = filter.id) }

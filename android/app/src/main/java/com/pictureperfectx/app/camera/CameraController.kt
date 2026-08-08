@@ -9,6 +9,7 @@ import android.util.Log
 import android.util.Range
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraEffect
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
@@ -78,8 +79,9 @@ class CameraController(context: Context) {
         private set
 
     /**
-     * Formats this lens can actually deliver: what it advertises, minus anything that turned out to
-     * be unbindable in practice. RAW is commonly back-camera only.
+     * Formats this lens advertises. Everything reported stays selectable even if a binding once
+     * failed — hiding a format forever meant one bad attempt removed it for good, with no way to
+     * retry. RAW is commonly back-camera only.
      */
     var availableFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG)
         private set
@@ -89,13 +91,6 @@ class CameraController(context: Context) {
 
     /** Notified when a format had to be abandoned, so the UI can explain the fallback. */
     var onBindError: ((String) -> Unit)? = null
-
-    // What the lens advertises, before subtracting formats that failed to bind.
-    private var reportedFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG)
-
-    // Formats a device advertises but rejects when actually bound, keyed by lens — a stream
-    // combination can be legal on one camera and not the other.
-    private val unbindable = mutableSetOf<Pair<Int, CaptureFormat>>()
 
     private var currentFilter: Filter = FilterCatalog.original
     private var intensity: Float = 1f
@@ -126,21 +121,26 @@ class CameraController(context: Context) {
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         // Format support is per-lens and the output format is fixed when ImageCapture is built, so
-        // both are resolved fresh on every binding.
-        reportedFormats = queryReportedFormats(provider, selector)
-        refreshAvailableFormats()
+        // it's resolved fresh on every binding. This pre-bind guess picks the first camera matching
+        // the selector; it's corrected below from the camera actually bound.
+        availableFormats = queryReportedFormats(cameraInfoFor(provider, selector))
+        if (captureFormat !in availableFormats) captureFormat = CaptureFormat.JPEG
 
         val rejected = captureFormat
         if (!tryBind(provider, owner, sp, selector, rejected) && rejected.writesRaw) {
             // A camera that advertises a format can still refuse the resulting stream combination.
-            // Remember that, drop back to JPEG and bind again: leaving the session unbound after
-            // unbindAll() is what froze the viewfinder with no way back. Only RAW gets this
-            // treatment — a JPEG failure has nothing to fall back to and is likely transient.
-            unbindable += lensFacing to rejected
-            refreshAvailableFormats()
-            onBindError?.invoke("${rejected.label} isn't supported on this camera — switched to JPEG")
-            tryBind(provider, owner, sp, selector, captureFormat)
+            // Drop back to JPEG and bind again: leaving the session unbound after unbindAll() is
+            // what froze the viewfinder. Only RAW gets this treatment — a JPEG failure has nothing
+            // to fall back to and is likely transient. The format stays selectable so it can be
+            // retried; only this attempt is abandoned.
+            captureFormat = CaptureFormat.JPEG
+            onBindError?.invoke("${rejected.label} isn't available on this camera — switched to JPEG")
+            tryBind(provider, owner, sp, selector, CaptureFormat.JPEG)
         }
+
+        // The bound camera is authoritative: on multi-camera devices the pre-bind guess above can
+        // describe a different physical sensor than the one CameraX actually opened.
+        camera?.cameraInfo?.let { availableFormats = queryReportedFormats(it) }
 
         // Re-assert the current look + adjustments on the processor for the fresh binding.
         processor.setLut(currentFilter.lutAsset)
@@ -181,7 +181,12 @@ class CameraController(context: Context) {
         val group = UseCaseGroup.Builder()
             .addUseCase(preview)
             .addUseCase(capture)
-            .addEffect(PreviewLutEffect(processor.executor, processor))
+            .apply {
+                // RAW-only saves unprocessed sensor data, so the LUT would only be a preview that
+                // lies about the file. Leaving the effect off also drops a GPU stream from the
+                // session, which is what lets a full-size RAW stream bind at all on some cameras.
+                if (format.appliesLook) addEffect(PreviewLutEffect(processor.executor, processor))
+            }
             .build()
 
         return try {
@@ -194,11 +199,6 @@ class CameraController(context: Context) {
         }
     }
 
-    /** Drops advertised formats this lens has already refused, keeping [captureFormat] valid. */
-    private fun refreshAvailableFormats() {
-        availableFormats = reportedFormats.filterNot { (lensFacing to it) in unbindable }.toSet()
-        if (captureFormat !in availableFormats) captureFormat = CaptureFormat.JPEG
-    }
 
     fun applyFilter(filter: Filter) {
         currentFilter = filter
@@ -291,17 +291,22 @@ class CameraController(context: Context) {
         CaptureFormat.RAW_JPEG -> ImageCapture.OUTPUT_FORMAT_RAW_JPEG
     }
 
+    private fun cameraInfoFor(provider: ProcessCameraProvider, selector: CameraSelector): CameraInfo? =
+        try {
+            selector.filter(provider.availableCameraInfos).firstOrNull()
+        } catch (e: Exception) {
+            Log.e(TAG, "Camera info lookup failed", e)
+            null
+        }
+
     /**
-     * Which formats this lens advertises. RAW and RAW+JPEG are checked separately — a camera can
+     * Which formats a camera advertises. RAW and RAW+JPEG are checked separately — a camera can
      * support one without the other, so a single "does RAW" flag would offer a mode it will reject.
      */
-    private fun queryReportedFormats(
-        provider: ProcessCameraProvider,
-        selector: CameraSelector,
-    ): Set<CaptureFormat> {
+    private fun queryReportedFormats(info: CameraInfo?): Set<CaptureFormat> {
         val jpegOnly = setOf(CaptureFormat.JPEG)
+        if (info == null) return jpegOnly
         return try {
-            val info = selector.filter(provider.availableCameraInfos).firstOrNull() ?: return jpegOnly
             val supported = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
             buildSet {
                 add(CaptureFormat.JPEG)

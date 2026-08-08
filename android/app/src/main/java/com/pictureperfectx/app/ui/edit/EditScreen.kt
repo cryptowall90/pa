@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.ui.camera.Adjustment
+import com.pictureperfectx.app.ui.components.CameraNotice
 import com.pictureperfectx.app.ui.components.FilterCarousel
 import com.pictureperfectx.app.ui.components.IntensitySlider
 
@@ -162,6 +163,9 @@ fun EditScreen(
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                state.notice?.let { notice ->
+                    CameraNotice(text = notice, onDismiss = viewModel::consumeNotice)
+                }
                 EditAdjust(
                     selected = state.selectedAdjustment,
                     exposure = state.exposure,

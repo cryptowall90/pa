@@ -9,8 +9,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,12 +21,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -52,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -68,16 +72,19 @@ import kotlinx.coroutines.withContext
 private val Brand = Color(0xFFFF4D6D)
 
 private const val RAW_THUMB_PX = 512
+private const val RAW_FULL_PX = 2048
 
 /**
  * A photo in the grid. RAW-only captures have no JPEG to show, so they fall back to the DNG's
- * embedded preview — Android can't decode the sensor data itself.
+ * embedded preview — Android can't decode the sensor data itself. [previewPx] sizes that fallback:
+ * the grid wants a small tile, the full-screen viewer wants as much as the file will give.
  */
 @Composable
 private fun PhotoThumb(
     photo: PhotoEntity,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    previewPx: Int = RAW_THUMB_PX,
 ) {
     if (!photo.isRawOnly) {
         AsyncImage(
@@ -90,10 +97,10 @@ private fun PhotoThumb(
     }
 
     val context = LocalContext.current
-    var preview by remember(photo.uri) { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(photo.uri) {
+    var preview by remember(photo.uri, previewPx) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(photo.uri, previewPx) {
         preview = withContext(Dispatchers.IO) {
-            RawPreview.thumbnail(context, Uri.parse(photo.uri), RAW_THUMB_PX)
+            RawPreview.thumbnail(context, Uri.parse(photo.uri), previewPx)
         }
     }
 
@@ -144,7 +151,9 @@ fun GalleryScreen(
     val selected by viewModel.selected.collectAsStateWithLifecycle()
     val selectionMode = selected.isNotEmpty()
 
-    var viewing by remember { mutableStateOf<PhotoEntity?>(null) }
+    // Tracked by id, not by entity: the viewer is a pager over the live list, and the row it shows
+    // can be deleted or reordered underneath it.
+    var viewingId by remember { mutableStateOf<Long?>(null) }
     var confirmSelected by remember { mutableStateOf(false) }
     var confirmSingle by remember { mutableStateOf<PhotoEntity?>(null) }
 
@@ -213,7 +222,7 @@ fun GalleryScreen(
                             .background(Color(0xFF1C1C1F))
                             .combinedClickable(
                                 onClick = {
-                                    if (selectionMode) viewModel.toggle(photo.id) else viewing = photo
+                                    if (selectionMode) viewModel.toggle(photo.id) else viewingId = photo.id
                                 },
                                 onLongClick = {
                                     if (!selectionMode) viewModel.startSelection(photo.id)
@@ -240,14 +249,21 @@ fun GalleryScreen(
         }
     }
 
-    // Full-screen viewer (only when not selecting).
-    viewing?.let { photo ->
-        PhotoViewer(
-            photo = photo,
-            onClose = { viewing = null },
-            onEdit = { onEdit(Uri.parse(photo.uri)) },
-            onDelete = { confirmSingle = photo },
-        )
+    // Full-screen swipeable viewer (only when not selecting). If the photo it opened on is gone —
+    // deleted from here or elsewhere — close rather than index into a stale position.
+    viewingId?.let { id ->
+        val startIndex = photos.indexOfFirst { it.id == id }
+        if (startIndex < 0) {
+            viewingId = null
+        } else {
+            PhotoPager(
+                photos = photos,
+                startIndex = startIndex,
+                onClose = { viewingId = null },
+                onEdit = { photo -> onEdit(Uri.parse(photo.uri)) },
+                onDelete = { photo -> confirmSingle = photo },
+            )
+        }
     }
 
     if (confirmSelected) {
@@ -260,7 +276,7 @@ fun GalleryScreen(
     confirmSingle?.let { photo ->
         ConfirmDeleteDialog(
             count = 1,
-            onConfirm = { viewModel.deleteSingle(photo); confirmSingle = null; viewing = null },
+            onConfirm = { viewModel.deleteSingle(photo); confirmSingle = null; viewingId = null },
             onDismiss = { confirmSingle = null },
         )
     }
@@ -299,58 +315,81 @@ private fun EmptyState(modifier: Modifier = Modifier) {
     }
 }
 
-/** Full-screen single-photo viewer with edit + delete actions. */
+/**
+ * Full-screen viewer you can swipe through, opening at [startIndex]. The header and its actions
+ * follow whichever page is showing, so Edit and Delete always act on the photo in front of you.
+ */
 @Composable
-private fun PhotoViewer(
-    photo: PhotoEntity,
+private fun PhotoPager(
+    photos: List<PhotoEntity>,
+    startIndex: Int,
     onClose: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    onEdit: (PhotoEntity) -> Unit,
+    onDelete: (PhotoEntity) -> Unit,
 ) {
     BackHandler(onBack = onClose)
+    val pagerState = rememberPagerState(initialPage = startIndex) { photos.size }
+    val current = photos.getOrNull(pagerState.currentPage)
+
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xF2000000))
-            .clickable(onClick = onClose),
+        modifier = Modifier.fillMaxSize().background(Color(0xF2000000)),
         contentAlignment = Alignment.Center,
     ) {
-        PhotoThumb(
-            photo = photo,
-            modifier = Modifier.fillMaxSize().padding(vertical = 64.dp),
-            contentScale = ContentScale.Fit,
-        )
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
-            }
-            Text(
-                text = photo.filterName,
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 4.dp),
+        HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+            PhotoThumb(
+                photo = photos[page],
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = 64.dp)
+                    // Tap-to-close as a gesture rather than `clickable`, which would swallow the
+                    // pager's horizontal drags.
+                    .pointerInput(Unit) { detectTapGestures(onTap = { onClose() }) },
+                contentScale = ContentScale.Fit,
+                previewPx = RAW_FULL_PX,
             )
-            if (photo.isRaw) {
-                RawBadge(modifier = Modifier.padding(start = 8.dp))
-            }
-            Spacer(modifier = Modifier.weight(1f))
-            // A DNG holds unprocessed sensor data the light editor can't open — RAW editing is a
-            // separate surface, so don't offer an action that would just spin.
-            if (!photo.isRawOnly) {
-                IconButton(onClick = onEdit) {
+        }
+
+        if (current != null) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close", tint = Color.White)
+                }
+                Text(
+                    text = current.filterName,
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+                if (current.isRaw) {
+                    RawBadge(modifier = Modifier.padding(start = 8.dp))
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = { onEdit(current) }) {
                     Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
                 }
+                IconButton(onClick = { onDelete(current) }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Brand)
+                }
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Brand)
+
+            if (photos.size > 1) {
+                Text(
+                    text = "${pagerState.currentPage + 1} / ${photos.size}",
+                    color = Color(0x99FFFFFF),
+                    fontSize = 12.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 16.dp),
+                )
             }
         }
     }
