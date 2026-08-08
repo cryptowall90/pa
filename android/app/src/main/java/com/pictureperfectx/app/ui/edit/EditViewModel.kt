@@ -156,7 +156,7 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
                     val s = _state.value
                     val out = ImageEditor.render(
                         getApplication(), src, s.selectedFilter ?: FilterCatalog.original,
-                        s.intensity, s.brightness, s.contrast, s.saturation,
+                        s.intensity, s.exposure, s.brightness, s.contrast, s.saturation,
                     )
                     val saved = PhotoSaver.save(getApplication(), out)
                     repository.record(
