@@ -32,6 +32,9 @@ object LayerRenderer {
     /** Blur strength is quoted against a 1000px short edge; anything else scales from there. */
     private const val BLUR_REFERENCE_EDGE = 1000f
 
+    /** The size the defocus is computed at, whatever the photo's own resolution. */
+    private const val BLUR_WORKING_EDGE = 1280
+
     fun render(context: Context, base: Bitmap, document: Document): Bitmap {
         val layers = document.renderable()
         if (layers.isEmpty()) return base
@@ -68,15 +71,46 @@ object LayerRenderer {
             }
         }
 
-        is Layer.Blur -> GPUImage(context.applicationContext)
-            .apply { setFilter(GPUImageBokehFilter(blurRadiusPixels(source, layer.radius))) }
-            .getBitmapWithFilterApplied(source)
+        is Layer.Blur -> bokeh(context, source, layer.radius)
     }
 
     /**
-     * The slider is a strength, not a pixel count. Passing pixels straight through would make the
-     * full-resolution export half as blurred as the preview it was judged on — the same photo, two
-     * different results. Scaling by the image's shorter edge keeps them matching.
+     * Defocuses [source] at a reduced working size, then scales the result back.
+     *
+     * A disc kernel costs one texture fetch per tap per pixel, and a full-resolution export has
+     * four times the pixels of the preview — so blurring at export size would be four times the
+     * work to produce detail the blur is throwing away regardless. Working at a fixed size also
+     * means the export is blurred exactly as the preview was, rather than merely similarly.
+     */
+    private fun bokeh(context: Context, source: Bitmap, strength: Int): Bitmap {
+        val longEdge = maxOf(source.width, source.height).coerceAtLeast(1)
+        val scale = if (longEdge > BLUR_WORKING_EDGE) BLUR_WORKING_EDGE.toFloat() / longEdge else 1f
+        val working = if (scale < 1f) {
+            Bitmap.createScaledBitmap(
+                source,
+                (source.width * scale).toInt().coerceAtLeast(1),
+                (source.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        } else {
+            source
+        }
+
+        val blurred = GPUImage(context.applicationContext)
+            .apply { setFilter(GPUImageBokehFilter(blurRadiusPixels(working, strength))) }
+            .getBitmapWithFilterApplied(working)
+        if (working !== source && working !== blurred && !working.isRecycled) working.recycle()
+
+        if (blurred.width == source.width && blurred.height == source.height) return blurred
+        val restored = Bitmap.createScaledBitmap(blurred, source.width, source.height, true)
+        if (restored !== blurred && !blurred.isRecycled) blurred.recycle()
+        return restored
+    }
+
+    /**
+     * The slider is a strength, not a pixel count — so it scales with the image it's applied to.
+     * A fixed pixel radius would mean the same setting blurred a small photo far more than a large
+     * one, and the number the user judged on the preview wouldn't survive the export.
      */
     private fun blurRadiusPixels(source: Bitmap, strength: Int): Float {
         val shortEdge = minOf(source.width, source.height).coerceAtLeast(1)
