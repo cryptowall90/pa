@@ -41,6 +41,49 @@ data class Mask(
         return if (inverted) 1f - raw else raw
     }
 
+    /**
+     * Coverage with its edges softened, so a painted mask blends instead of showing a hard rim.
+     *
+     * A separable box blur run [feather]-proportional times: cheap, and on a grid this small the
+     * repeated passes approximate a gaussian closely enough that no edge is visible once the grid is
+     * scaled up over the photo.
+     */
+    fun softened(): FloatArray {
+        if (isEmpty) return coverage
+        val oriented = FloatArray(coverage.size) { index ->
+            val value = coverage[index]
+            if (inverted) 1f - value else value
+        }
+        val radius = (feather.coerceIn(0f, 1f) * MAX_FEATHER_RADIUS).toInt()
+        if (radius <= 0) return oriented
+
+        var source = oriented
+        var target = FloatArray(source.size)
+        repeat(PASSES) {
+            blurAxis(source, target, radius, horizontal = true)
+            blurAxis(target, source, radius, horizontal = false)
+        }
+        return source
+    }
+
+    private fun blurAxis(source: FloatArray, target: FloatArray, radius: Int, horizontal: Boolean) {
+        for (row in 0 until rows) {
+            for (column in 0 until columns) {
+                var total = 0f
+                var samples = 0
+                for (offset in -radius..radius) {
+                    val sampleColumn = if (horizontal) column + offset else column
+                    val sampleRow = if (horizontal) row else row + offset
+                    if (sampleColumn in 0 until columns && sampleRow in 0 until rows) {
+                        total += source[sampleRow * columns + sampleColumn]
+                        samples++
+                    }
+                }
+                target[row * columns + column] = if (samples > 0) total / samples else 0f
+            }
+        }
+    }
+
     // FloatArray gives this data class identity semantics for equals/hashCode, which would break
     // undo comparisons and recomposition; compare the contents instead.
     override fun equals(other: Any?): Boolean {
@@ -61,9 +104,15 @@ data class Mask(
 
     companion object {
         const val DEFAULT_RESOLUTION = 64
+        private const val MAX_FEATHER_RADIUS = 6
+        private const val PASSES = 2
 
         fun full(columns: Int = DEFAULT_RESOLUTION, rows: Int = DEFAULT_RESOLUTION): Mask =
             Mask(columns, rows, FloatArray(columns * rows) { 1f })
+
+        /** An empty coverage grid, ready to be painted into. */
+        fun blank(columns: Int = DEFAULT_RESOLUTION, rows: Int = DEFAULT_RESOLUTION): Mask =
+            Mask(columns, rows, FloatArray(columns * rows))
     }
 }
 

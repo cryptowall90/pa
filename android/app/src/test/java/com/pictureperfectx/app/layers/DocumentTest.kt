@@ -141,6 +141,49 @@ class DocumentTest {
     }
 
     @Test
+    fun `softening leaves a fully painted mask fully painted`() {
+        val softened = Mask.full(8, 8).softened()
+        softened.forEach { assertEquals(1f, it, 0.0001f) }
+    }
+
+    @Test
+    fun `softening spreads coverage into neighbouring cells`() {
+        val coverage = FloatArray(8 * 8)
+        coverage[4 * 8 + 4] = 1f // a single painted cell
+        val mask = Mask(8, 8, coverage, feather = 1f)
+        val softened = mask.softened()
+
+        assertTrue("the painted cell should bleed outwards", softened[4 * 8 + 3] > 0f)
+        assertTrue("softening should lower the peak", softened[4 * 8 + 4] < 1f)
+    }
+
+    @Test
+    fun `zero feather leaves coverage untouched`() {
+        val coverage = FloatArray(4 * 4) { if (it == 5) 1f else 0f }
+        val softened = Mask(4, 4, coverage, feather = 0f).softened()
+        assertEquals(1f, softened[5], 0.0001f)
+        assertEquals(0f, softened[0], 0.0001f)
+    }
+
+    @Test
+    fun `softening applies inversion before blurring`() {
+        val softened = Mask.full(4, 4).copy(inverted = true, feather = 0f).softened()
+        softened.forEach { assertEquals(0f, it, 0.0001f) }
+    }
+
+    @Test
+    fun `an empty mask softens to nothing rather than crashing`() {
+        assertEquals(0, Mask().softened().size)
+    }
+
+    @Test
+    fun `a blank mask starts with no coverage`() {
+        val blank = Mask.blank(4, 4)
+        assertFalse(blank.isEmpty)
+        assertEquals(0f, blank.coverageAt(2, 2), 0.0001f)
+    }
+
+    @Test
     fun `history starts with nothing to undo or redo`() {
         val history = History()
         assertFalse(history.canUndo)
