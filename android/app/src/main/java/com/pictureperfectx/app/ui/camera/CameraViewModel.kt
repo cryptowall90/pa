@@ -149,7 +149,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
                     result
                 }
                 _state.update { it.copy(isSaving = false, lastSavedThumbUri = saved.uri.toString()) }
-                emit(CameraEvent.Saved("Saved to Pictures/PicturePerfectX"))
+                emit(CameraEvent.Saved("Saved to your gallery"))
             } catch (e: Exception) {
                 _state.update { it.copy(isSaving = false) }
                 emit(CameraEvent.Error(e.message ?: "Couldn't save photo"))

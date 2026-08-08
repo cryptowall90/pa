@@ -29,11 +29,13 @@ data class EditUiState(
     val filters: List<Filter> = listOf(FilterCatalog.original),
     val selectedFilterId: String = Filter.ORIGINAL_ID,
     val intensity: Int = 100,
-    val selectedAdjustment: Adjustment = Adjustment.Brightness,
+    val selectedAdjustment: Adjustment = Adjustment.Exposure,
+    val exposure: Int = 0,
     val brightness: Int = 0,
     val contrast: Int = 0,
     val saturation: Int = 0,
     val preview: Bitmap? = null,
+    val original: Bitmap? = null,
     val isSaving: Boolean = false,
     val ready: Boolean = false,
     val savedMessage: String? = null,
@@ -80,9 +82,11 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(
                     ready = full != null,
                     preview = preview,
+                    original = preview, // unedited, for hold-to-compare
                     selectedFilterId = Filter.ORIGINAL_ID,
                     intensity = 100,
-                    selectedAdjustment = Adjustment.Brightness,
+                    selectedAdjustment = Adjustment.Exposure,
+                    exposure = 0,
                     brightness = 0,
                     contrast = 0,
                     saturation = 0,
@@ -103,6 +107,11 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onSelectAdjustment(a: Adjustment) = _state.update { it.copy(selectedAdjustment = a) }
+
+    fun onExposureChanged(v: Int) {
+        _state.update { it.copy(exposure = v) }
+        scheduleRender()
+    }
 
     fun onBrightnessChanged(v: Int) {
         _state.update { it.copy(brightness = v) }
@@ -129,7 +138,7 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching {
                     ImageEditor.render(
                         getApplication(), src, s.selectedFilter ?: FilterCatalog.original,
-                        s.intensity, s.brightness, s.contrast, s.saturation,
+                        s.intensity, s.exposure, s.brightness, s.contrast, s.saturation,
                     )
                 }.getOrNull()
             }
@@ -165,7 +174,7 @@ class EditViewModel(app: Application) : AndroidViewModel(app) {
                 }.isSuccess
             }
             _state.update {
-                it.copy(isSaving = false, savedMessage = if (ok) "Saved to Pictures/PicturePerfectX" else "Couldn't save")
+                it.copy(isSaving = false, savedMessage = if (ok) "Saved to your gallery" else "Couldn't save")
             }
             if (ok) onSaved()
         }

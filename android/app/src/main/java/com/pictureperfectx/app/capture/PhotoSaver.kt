@@ -13,7 +13,7 @@ import java.io.IOException
 data class SavedPhoto(val uri: Uri, val displayName: String, val width: Int, val height: Int)
 
 /**
- * Writes a finished [Bitmap] into the shared gallery under `Pictures/PicturePerfectX`.
+ * Writes a finished [Bitmap] into the phone gallery under `DCIM/PicturePerfectX`.
  *
  * Uses the scoped-storage MediaStore API on API 29+ (no runtime permission needed) and falls
  * back to a direct public-directory insert on older devices, where WRITE_EXTERNAL_STORAGE is
@@ -22,8 +22,9 @@ data class SavedPhoto(val uri: Uri, val displayName: String, val width: Int, val
 object PhotoSaver {
 
     private const val ALBUM = "PicturePerfectX"
-    // Not `const`: Environment.DIRECTORY_PICTURES is a runtime field, so this is resolved at runtime.
-    private val RELATIVE_PATH = "${Environment.DIRECTORY_PICTURES}/$ALBUM"
+    // Save under DCIM (where the phone camera stores photos) in an app-created album, so shots show
+    // up in the phone's gallery alongside camera photos. Not `const`: DIRECTORY_DCIM is a runtime field.
+    private val RELATIVE_PATH = "${Environment.DIRECTORY_DCIM}/$ALBUM"
 
     fun save(context: Context, bitmap: Bitmap): SavedPhoto {
         val displayName = "PPX_${System.currentTimeMillis()}.jpg"
