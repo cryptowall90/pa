@@ -453,16 +453,7 @@ private fun EffectsBar(
         IconButton(onClick = onAddEffect, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Filled.AutoAwesome, contentDescription = "Add an effect", tint = Brand)
         }
-        // Detection takes a moment, and a bokeh layer does nothing until it lands — so say so
-        // rather than leaving the photo looking unchanged.
-        if (state.isDetecting) {
-            CircularProgressIndicator(
-                color = Brand,
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(text = "Finding your subject…", color = Color(0xAAFFFFFF), fontSize = 12.sp)
-        } else if (state.document.isEmpty) {
+        if (state.document.isEmpty) {
             Text(
                 text = "Add an effect, then paint to choose where it applies.",
                 color = Color(0xAAFFFFFF),
@@ -537,20 +528,13 @@ private fun LayerSettingsDialog(
                         onChange = { value -> viewModel.onLayerToneChanged(layer.id, state.band, value) },
                     )
 
-                    is Layer.Blur -> {
-                        LabelledSlider(
-                            label = "Bokeh",
-                            value = layer.radius.toFloat(),
-                            range = 1f..60f,
-                            readout = "${layer.radius}",
-                            onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
-                        )
-                        PanelChip(
-                            label = if (state.isDetecting) "Finding subject…" else "Find subject again",
-                        ) {
-                            if (!state.isDetecting) viewModel.onDetectSubject(layer.id)
-                        }
-                    }
+                    is Layer.Blur -> LabelledSlider(
+                        label = "Blur",
+                        value = layer.radius.toFloat(),
+                        range = 1f..60f,
+                        readout = "${layer.radius}",
+                        onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
+                    )
 
                     is Layer.Look -> Unit
                 }

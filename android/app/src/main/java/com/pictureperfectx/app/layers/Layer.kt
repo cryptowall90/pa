@@ -152,7 +152,13 @@ sealed interface Layer {
         val intensity: Int = 100,
     ) : Layer
 
-    /** A blur confined to the mask — the shape the bokeh tool will take. */
+    /**
+     * A defocus blur confined to the mask.
+     *
+     * Dormant: nothing in the UI creates one while bokeh is shelved. It stays because it renders
+     * correctly and is the re-entry point — a blur confined to a hand-drawn selection is bokeh
+     * with no model involved at all.
+     */
     data class Blur(
         override val id: Long,
         override val name: String = "Blur",
