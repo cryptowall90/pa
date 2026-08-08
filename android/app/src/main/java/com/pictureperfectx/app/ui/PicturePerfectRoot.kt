@@ -9,16 +9,18 @@ import androidx.compose.runtime.setValue
 import com.pictureperfectx.app.ui.camera.CameraScreen
 import com.pictureperfectx.app.ui.edit.EditScreen
 import com.pictureperfectx.app.ui.gallery.GalleryScreen
+import com.pictureperfectx.app.ui.perfect.PerfectEditorScreen
 
 private sealed interface Screen {
     data object Camera : Screen
     data object Gallery : Screen
     data class Edit(val uri: Uri) : Screen
+    data class PerfectEdit(val uri: Uri) : Screen
 }
 
 /**
  * Top-level in-app navigation (lightweight, no nav library). Camera is home; the gallery pushes
- * over it; the editor opens from a saved photo or an imported device image and returns to the gallery.
+ * over it; both editors open from a saved photo or an imported device image and return to the gallery.
  */
 @Composable
 fun PicturePerfectRoot() {
@@ -31,8 +33,14 @@ fun PicturePerfectRoot() {
         Screen.Gallery -> GalleryScreen(
             onBack = { screen = Screen.Camera },
             onEdit = { uri -> screen = Screen.Edit(uri) },
+            onPerfectEdit = { uri -> screen = Screen.PerfectEdit(uri) },
         )
         is Screen.Edit -> EditScreen(
+            sourceUri = current.uri,
+            onBack = { screen = Screen.Gallery },
+            onSaved = { screen = Screen.Gallery },
+        )
+        is Screen.PerfectEdit -> PerfectEditorScreen(
             sourceUri = current.uri,
             onBack = { screen = Screen.Gallery },
             onSaved = { screen = Screen.Gallery },

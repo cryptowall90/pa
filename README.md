@@ -52,6 +52,40 @@ Fully native Kotlin. No cross-platform runtime.
    `DCIM/PicturePerfectX` via MediaStore (so shots appear in the phone gallery
    alongside camera photos).
 
+### RAW capture (JPEG / RAW)
+
+- A **format chip** in the camera top bar switches between `JPEG` and `RAW`, appearing only on
+  lenses that can actually produce a DNG (checked per-lens via
+  `ImageCapture.getImageCaptureCapabilities`).
+- **RAW is never filtered.** A DNG is unprocessed sensor data by definition, so looks are baked
+  into JPEGs only. RAW saves the `.dng` alone to the phone gallery.
+- DNGs are written by CameraX straight into `DCIM/PicturePerfectX` alongside the JPEGs, so they
+  show up in the phone's gallery and import into desktop RAW tools.
+- **RAW-only shoots without the preview filter.** The LUT never reaches a DNG, so attaching it would
+  be a viewfinder that lies about the file — and dropping that GPU stream is also what lets a
+  full-size RAW stream bind on cameras that otherwise refuse it. In RAW-only the filter strip and the
+  brightness/contrast/saturation sliders are shown disabled, with a dismissible note explaining why.
+  **Exposure stays live**, because the sensor applies it and it genuinely changes the DNG.
+- **A refused format can never freeze the viewfinder.** A camera that advertises a format can still
+  reject the resulting stream combination; the app falls back to JPEG, rebinds, and shows a message
+  that stays until acknowledged. The format remains selectable so it can be retried. RAW also uses
+  `CAPTURE_MODE_MAXIMIZE_QUALITY`, since low-latency capture opts into zero-shutter-lag paths that
+  conflict with RAW on many devices.
+- DNG entries carry a **`RAW` badge**.
+- **RAW shots stay sharp in the app.** Android's `DngCreator` caps a DNG's embedded preview at
+  **256 px**, and phones that can't demosaic RAW have nothing better to show — so every RAW capture
+  keeps a full-resolution, **unfiltered** JPEG in app-private storage (`capture/ProxyStore.kt`).
+  It never appears in the phone's gallery, the DNG is untouched, and it's what the grid, viewer and
+  both editors actually draw — which is also what lets a RAW edit save at full resolution.
+  It's deleted with its gallery entry. To obtain that file the shot rides the camera's RAW+JPEG
+  stream where one exists, routing the JPEG half to private storage rather than the gallery — the
+  user still gets only a `.dng`. Where a lens can't do RAW+JPEG, RAW still works, just without a
+  proxy.
+- **RAW photos can be edited.** Android's Java decoders don't guarantee DNG support, so the editor
+  attempts a full decode and falls back to the embedded preview, telling you when that means the
+  saved photo will be lower resolution. Edits always save as a **new JPEG** — a DNG is never
+  written to.
+
 ### LUT pack + intensity (100 looks)
 
 - **100 real 512×512 GPUImage LUTs** shipped in `app/src/main/assets/luts/`,
@@ -73,17 +107,35 @@ Fully native Kotlin. No cross-platform runtime.
 
 - A 3-column grid of every capture, read from the local **Room** index; tap the
   library button (bottom-left of the camera) to open it, tap a photo for a
-  full-screen viewer.
+  full-screen viewer, and **swipe left/right to move between photos** without
+  going back to the grid.
 - **Multi-select delete**: long-press a photo to start selecting, tap more to add,
   then delete — with a confirmation dialog. Delete removes the photo from the
   **app** gallery (its Room index row) only; the file stays on the device, so it
   remains in the phone gallery.
 - Images load from their **MediaStore** content URIs via Coil.
 
-### Editor (`ui/edit/`)
+### Perfect Editor (`ui/perfect/`)
+
+The heavier editing surface, opened with the crop icon in the photo viewer. Its first release is
+geometry:
+
+- **Crop** with a draggable frame — corner and edge handles, rule-of-thirds grid, dimmed surround.
+- **Aspect ratios**: Original, Free, 1:1, 4:5, 9:16, 16:9, 3:2, 4:3, 5:7. With a ratio locked,
+  corners resize proportionally and the frame can be dragged around.
+- **Straighten** (−45°…45°), **rotate** in quarter turns, and **flip** both ways. Straightening
+  scales just enough to cover the frame, so a levelled photo never shows empty corners.
+- The edit is a declarative `ImageGeometry` (flips → turns → straighten → crop) with the crop held
+  in **normalized 0..1 coordinates**, so the preview and the full-resolution export frame
+  identically by construction. The maths lives in `capture/ImageGeometry.kt`, free of Android types
+  and **covered by unit tests** — the only part of the editor CI can actually execute.
+- Saves as a **new photo**; the source is never modified.
+
+### Light editor (`ui/edit/`)
 
 - Re-edit a saved photo (Edit in the viewer) or **import a device photo** (the
-  system photo picker — no extra permission) into the editor.
+  system photo picker — no extra permission). Either way a named chooser asks for
+  **Light Edit** or **Perfect Editor**, so both surfaces are discoverable by name.
 - Same looks + intensity + **exposure / brightness / contrast / saturation** as the
   camera, rendered live via `capture/ImageEditor.kt` (GPUImage off-screen).
 - **Press and hold** the preview to compare against the unedited original.

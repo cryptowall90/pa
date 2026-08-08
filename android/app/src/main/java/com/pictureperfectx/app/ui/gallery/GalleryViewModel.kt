@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pictureperfectx.app.PicturePerfectApp
+import com.pictureperfectx.app.capture.ProxyStore
 import com.pictureperfectx.app.data.PhotoEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,7 +18,9 @@ import kotlinx.coroutines.launch
  * Backs the in-app gallery from the local Room index.
  *
  * Deleting here removes a photo from the **app's** gallery (its Room index row) only — the image
- * file stays on the device, so it remains in the phone's gallery. Fully on-device; no network.
+ * file stays on the device, so it remains in the phone's gallery. The one exception is a RAW photo's
+ * private proxy: that's the app's own scratch rather than something the user shot, so it goes with
+ * the entry instead of lingering as orphaned storage. Fully on-device; no network.
  */
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -41,12 +44,19 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteSelected() {
         val ids = _selected.value
         if (ids.isEmpty()) return
+        // Resolve the rows before clearing, so their proxies can be cleaned up too.
+        val doomed = photos.value.filter { it.id in ids }
         clearSelection()
-        viewModelScope.launch { ids.forEach { repository.remove(it) } }
+        viewModelScope.launch { doomed.forEach { remove(it) } }
     }
 
     /** Remove a single photo from the app gallery (file stays on the device). */
     fun deleteSingle(photo: PhotoEntity) {
-        viewModelScope.launch { repository.remove(photo.id) }
+        viewModelScope.launch { remove(photo) }
+    }
+
+    private suspend fun remove(photo: PhotoEntity) {
+        repository.remove(photo.id)
+        ProxyStore.delete(getApplication(), photo.proxyUri)
     }
 }

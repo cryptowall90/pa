@@ -41,11 +41,16 @@ fun AdjustPanel(
 ) {
     val chips = buildList {
         if (state.exposureSupported) add(Adjustment.Exposure)
-        add(Adjustment.Brightness)
-        add(Adjustment.Contrast)
-        add(Adjustment.Saturation)
+        // Brightness/contrast/saturation are post-processing, so they never reach a RAW file.
+        // Exposure stays: the sensor applies it, so it genuinely changes the DNG.
+        if (state.looksApply) {
+            add(Adjustment.Brightness)
+            add(Adjustment.Contrast)
+            add(Adjustment.Saturation)
+        }
     }
-    val selected = if (state.selectedAdjustment in chips) state.selectedAdjustment else Adjustment.Brightness
+    if (chips.isEmpty()) return
+    val selected = if (state.selectedAdjustment in chips) state.selectedAdjustment else chips.first()
 
     Column(
         modifier = modifier

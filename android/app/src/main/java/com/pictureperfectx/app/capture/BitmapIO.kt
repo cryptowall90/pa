@@ -9,8 +9,45 @@ import android.net.Uri
 import java.io.ByteArrayInputStream
 import kotlin.math.max
 
+/**
+ * A loaded source image. [degraded] is true when the real image couldn't be decoded and this is a
+ * lower-resolution stand-in — an editor saving it produces a smaller file than the original.
+ */
+data class LoadedImage(val bitmap: Bitmap, val degraded: Boolean)
+
 /** Loads bitmaps from content URIs, downscaled and rotated per EXIF so edits start upright. */
 object BitmapIO {
+
+    /**
+     * Load [uri] for editing, falling back to a RAW file's embedded preview.
+     *
+     * Android's Java decoders don't guarantee DNG support — some builds ship a RAW codec, others
+     * quietly hand back the file's embedded thumbnail instead of demosaicing. A decode that
+     * *succeeds* is therefore not proof of quality, so the result is also judged on size: anything
+     * far smaller than the frame the file claims is reported as [LoadedImage.degraded].
+     */
+    fun loadForEdit(context: Context, uri: Uri, maxEdge: Int): LoadedImage? {
+        load(context, uri, maxEdge)?.let { return LoadedImage(it, degraded = isUndersized(context, uri, it, maxEdge)) }
+        val preview = RawPreview.thumbnail(context, uri, maxEdge) ?: return null
+        return LoadedImage(preview, degraded = true)
+    }
+
+    /**
+     * True when a RAW decode came back far below what was asked for *and* below what the file holds.
+     *
+     * Only RAW is judged this way: downsampling a JPEG to [maxEdge] is the point of [load], not a
+     * failure. A DNG's embedded thumbnail is capped at 256px by the writer, so a "successful" decode
+     * at that size means the codec punted rather than demosaiced.
+     */
+    private fun isUndersized(context: Context, uri: Uri, decoded: Bitmap, maxEdge: Int): Boolean {
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        if (mime != PhotoSaver.MIME_DNG) return false
+        val (declaredWidth, declaredHeight) = RawPreview.dimensions(context, uri)
+        val declared = max(declaredWidth, declaredHeight)
+        if (declared <= 0) return false
+        val wanted = minOf(maxEdge, declared)
+        return max(decoded.width, decoded.height) < wanted / 2
+    }
 
     /** Load [uri], downscaled so its longest edge is <= [maxEdge], with EXIF orientation applied. */
     fun load(context: Context, uri: Uri, maxEdge: Int): Bitmap? {
@@ -35,7 +72,8 @@ object BitmapIO {
         return applyExifOrientation(decoded, orientation)
     }
 
-    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+    /** Applies one of the 8 EXIF/TIFF orientations, returning [bitmap] unchanged when upright. */
+    internal fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
         val m = Matrix()
         when (orientation) {
             ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)

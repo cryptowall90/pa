@@ -1,0 +1,57 @@
+package com.pictureperfectx.app.camera
+
+import android.graphics.Bitmap
+import android.net.Uri
+import com.pictureperfectx.app.filter.Filter
+
+/**
+ * What a shutter press writes.
+ *
+ * A LUT is a creative rendering, so it is baked into JPEGs only — a DNG is unprocessed sensor data
+ * by definition and is always saved as the camera captured it.
+ */
+enum class CaptureFormat(val label: String) {
+    JPEG("JPEG"),
+    RAW("RAW"),
+    ;
+
+    val writesRaw: Boolean get() = this != JPEG
+
+    /**
+     * Whether the selected look reaches the saved file. A RAW-only shot is pure sensor data, so the
+     * LUT and the post-processing adjustments apply to nothing — the viewfinder shows the frame
+     * unfiltered rather than promising a rendering that won't exist.
+     */
+    val appliesLook: Boolean get() = this != RAW
+
+    /**
+     * The next format the user can actually shoot, cycling within [available] so the chip can never
+     * land on a mode this camera has already refused.
+     */
+    fun next(available: Set<CaptureFormat>): CaptureFormat {
+        val ordered = CaptureFormat.entries.filter { it in available }
+        if (ordered.isEmpty()) return JPEG
+        return ordered[(ordered.indexOf(this) + 1) % ordered.size]
+    }
+}
+
+/** Outcome of a capture, handed back off the main thread. */
+sealed interface CaptureResult {
+
+    /** A finished, filtered still the caller still has to save. */
+    data class Jpeg(val bitmap: Bitmap, val filter: Filter) : CaptureResult
+
+    /**
+     * A DNG already written to MediaStore by CameraX.
+     *
+     * [proxyPath] points at the app-private, unfiltered full-resolution stand-in kept for it — a
+     * DNG's own embedded preview tops out at 256px, so without it the photo can only be shown soft.
+     */
+    data class Raw(
+        val dngUri: Uri,
+        val dngName: String,
+        val width: Int,
+        val height: Int,
+        val proxyPath: String? = null,
+    ) : CaptureResult
+}
