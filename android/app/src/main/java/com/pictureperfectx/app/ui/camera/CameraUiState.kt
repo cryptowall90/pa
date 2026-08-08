@@ -11,7 +11,8 @@ data class CameraUiState(
     val intensity: Int = 100,               // 0-100 LUT strength
     val flashMode: Int = ImageCapture.FLASH_MODE_OFF,
     val captureFormat: CaptureFormat = CaptureFormat.JPEG,
-    val rawSupported: Boolean = false,      // per-lens; hides the format control when false
+    // Per-lens, and minus anything the camera refused to bind; hides the chip when there's no choice.
+    val availableFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG),
     val isFrontFacing: Boolean = false,
     val isSaving: Boolean = false,
     val lastSavedThumbUri: String? = null,
@@ -35,6 +36,10 @@ data class CameraUiState(
 
     val exposureSupported: Boolean
         get() = exposureMax > exposureMin
+
+    /** Only worth showing the format chip when there is more than one format to pick. */
+    val formatSwitchable: Boolean
+        get() = availableFormats.size > 1
 }
 
 /** One manual adjustment, chosen one-at-a-time in the adjustments row. */

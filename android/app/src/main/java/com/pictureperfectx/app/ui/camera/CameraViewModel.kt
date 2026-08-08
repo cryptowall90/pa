@@ -34,10 +34,12 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
     val events = _events.receiveAsFlow()
 
     init {
-        // RAW support is only known once a lens is bound, and changes when the lens does.
-        controller.onRawSupportChanged = { supported ->
-            _state.update { it.copy(rawSupported = supported, captureFormat = controller.captureFormat) }
+        // Format support is only known once a lens is bound, and changes when the lens does.
+        controller.onFormatsChanged = { formats, active ->
+            _state.update { it.copy(availableFormats = formats, captureFormat = active) }
         }
+        // A camera that refuses a format used to leave the preview frozen with no explanation.
+        controller.onBindError = { message -> emit(CameraEvent.Error(message)) }
         controller.applyFilter(FilterCatalog.original)
         // Load the 100-LUT pack off the main thread, then publish it to the UI.
         viewModelScope.launch {
@@ -67,10 +69,9 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(flashMode = mode) }
     }
 
-    /** Cycles JPEG -> RAW -> RAW+JPEG. Only reachable when the bound lens can write a DNG. */
+    /** Cycles through the formats this lens can actually deliver. */
     fun onCycleCaptureFormat() {
-        if (!controller.rawSupported) return
-        controller.setCaptureFormat(controller.captureFormat.next())
+        controller.setCaptureFormat(controller.captureFormat.next(controller.availableFormats))
         _state.update { it.copy(captureFormat = controller.captureFormat) }
     }
 
@@ -171,18 +172,24 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         is CaptureResult.Raw -> {
             val jpeg = result.jpeg
             val raw = result.dngUri.toString()
+            // A DNG carries no look, so it's always indexed as Original rather than claiming the
+            // active filter was applied to unprocessed sensor data.
+            val rawEntity = entity(raw, result.dngName, FilterCatalog.original, result.width, result.height, raw)
+
             if (jpeg != null) {
-                // RAW+JPEG: the filtered JPEG is what the gallery shows; the DNG rides along with it.
+                // RAW+JPEG writes two files, so the app gallery gets two independent entries to
+                // match the phone gallery: the DNG on its own, and the filtered JPEG as an ordinary
+                // editable photo. The DNG is inserted first so the JPEG takes the higher row id and
+                // sorts ahead of it when their timestamps tie.
+                repository.record(rawEntity)
                 val name = result.dngName.removeSuffix(".dng") + ".jpg"
                 val saved = PhotoSaver.save(getApplication(), jpeg.bitmap, name)
-                repository.record(entity(saved.uri.toString(), saved.displayName, jpeg.filter, saved.width, saved.height, raw))
+                repository.record(
+                    entity(saved.uri.toString(), saved.displayName, jpeg.filter, saved.width, saved.height, null),
+                )
                 saved.uri.toString()
             } else {
-                // RAW only: CameraX already wrote the DNG, and a DNG carries no look — record it as
-                // Original rather than claiming the active filter was applied to unprocessed data.
-                repository.record(
-                    entity(raw, result.dngName, FilterCatalog.original, result.width, result.height, raw),
-                )
+                repository.record(rawEntity)
                 raw
             }
         }

@@ -92,7 +92,7 @@ private fun CaptureFormatChip(format: CaptureFormat, onClick: () -> Unit) {
 fun CameraTopBar(
     flashMode: Int,
     captureFormat: CaptureFormat,
-    rawSupported: Boolean,
+    formatSwitchable: Boolean,
     adjustmentsOpen: Boolean,
     filtersOpen: Boolean,
     onCycleFlash: () -> Unit,
@@ -112,7 +112,7 @@ fun CameraTopBar(
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             CircleIconButton(icon = icon, contentDescription = "Toggle flash", onClick = onCycleFlash)
-            if (rawSupported) {
+            if (formatSwitchable) {
                 CaptureFormatChip(format = captureFormat, onClick = onCycleCaptureFormat)
             }
         }

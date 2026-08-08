@@ -68,7 +68,7 @@ fun CameraScreen(
             CameraTopBar(
                 flashMode = state.flashMode,
                 captureFormat = state.captureFormat,
-                rawSupported = state.rawSupported,
+                formatSwitchable = state.formatSwitchable,
                 adjustmentsOpen = state.showAdjustments,
                 filtersOpen = state.showFilters,
                 onCycleFlash = viewModel::onCycleFlash,

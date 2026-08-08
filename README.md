@@ -54,16 +54,24 @@ Fully native Kotlin. No cross-platform runtime.
 
 ### RAW capture (JPEG / RAW / RAW+JPEG)
 
-- A **format chip** in the camera top bar cycles `JPEG → RAW → RAW+JPEG`. It only appears on
-  lenses that can actually produce a DNG (checked per-lens via
-  `ImageCapture.getImageCaptureCapabilities`), and captures silently fall back to JPEG elsewhere.
+- A **format chip** in the camera top bar cycles `JPEG → RAW → RAW+JPEG`, offering only the formats
+  the current lens can actually deliver. `RAW` and `RAW+JPEG` are checked **separately** per lens
+  via `ImageCapture.getImageCaptureCapabilities` — a camera can support one without the other.
 - **RAW is never filtered.** A DNG is unprocessed sensor data by definition, so looks are baked
   into JPEGs only. In `RAW+JPEG` the DNG is saved untouched and the JPEG gets the active LUT.
 - DNGs are written by CameraX straight into `DCIM/PicturePerfectX` alongside the JPEGs, so they
   show up in the phone's gallery and import into desktop RAW tools.
-- Every RAW capture carries a **`RAW` badge** in the in-app gallery. RAW-only shots have no JPEG,
-  so their tile falls back to the DNG's embedded preview (Android ships no RAW decoder) — and the
-  light editor hides its Edit action for them rather than offering something it can't open.
+- **A refused format can never freeze the viewfinder.** A camera that advertises a format can still
+  reject the resulting stream combination; when that happens the app remembers it for that lens,
+  falls back to JPEG, rebinds, and says so in a snackbar. RAW also uses
+  `CAPTURE_MODE_MAXIMIZE_QUALITY`, since low-latency capture opts into zero-shutter-lag paths that
+  conflict with RAW on many devices.
+- `RAW+JPEG` writes two files, so it produces **two gallery entries** mirroring the phone gallery:
+  the DNG on its own, and the filtered JPEG as an ordinary editable photo. Deleting one leaves the
+  other.
+- DNG entries carry a **`RAW` badge**. They have no JPEG to show, so their tile falls back to the
+  file's embedded preview (Android ships no RAW decoder) — and the light editor hides its Edit
+  action for them rather than offering something it can't open.
 
 ### LUT pack + intensity (100 looks)
 

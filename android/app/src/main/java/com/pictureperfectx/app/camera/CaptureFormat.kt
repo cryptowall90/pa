@@ -18,7 +18,15 @@ enum class CaptureFormat(val label: String) {
 
     val writesRaw: Boolean get() = this != JPEG
 
-    fun next(): CaptureFormat = CaptureFormat.entries[(ordinal + 1) % CaptureFormat.entries.size]
+    /**
+     * The next format the user can actually shoot, cycling within [available] so the chip can never
+     * land on a mode this camera has already refused.
+     */
+    fun next(available: Set<CaptureFormat>): CaptureFormat {
+        val ordered = CaptureFormat.entries.filter { it in available }
+        if (ordered.isEmpty()) return JPEG
+        return ordered[(ordered.indexOf(this) + 1) % ordered.size]
+    }
 }
 
 /** Outcome of a capture, handed back off the main thread. */

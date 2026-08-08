@@ -73,16 +73,29 @@ class CameraController(context: Context) {
     var flashMode: Int = ImageCapture.FLASH_MODE_OFF
         private set
 
-    /** What the shutter writes. Falls back to JPEG on cameras that can't produce a DNG. */
+    /** What the shutter writes. Always one of [availableFormats]. */
     var captureFormat: CaptureFormat = CaptureFormat.JPEG
         private set
 
-    /** Whether the *currently selected* lens can write RAW — commonly true only on the back camera. */
-    var rawSupported: Boolean = false
+    /**
+     * Formats this lens can actually deliver: what it advertises, minus anything that turned out to
+     * be unbindable in practice. RAW is commonly back-camera only.
+     */
+    var availableFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG)
         private set
 
-    /** Notified on the main thread after each binding, since RAW support is per-lens. */
-    var onRawSupportChanged: ((Boolean) -> Unit)? = null
+    /** Notified on the main thread after each binding, since format support is per-lens. */
+    var onFormatsChanged: ((Set<CaptureFormat>, CaptureFormat) -> Unit)? = null
+
+    /** Notified when a format had to be abandoned, so the UI can explain the fallback. */
+    var onBindError: ((String) -> Unit)? = null
+
+    // What the lens advertises, before subtracting formats that failed to bind.
+    private var reportedFormats: Set<CaptureFormat> = setOf(CaptureFormat.JPEG)
+
+    // Formats a device advertises but rejects when actually bound, keyed by lens — a stream
+    // combination can be legal on one camera and not the other.
+    private val unbindable = mutableSetOf<Pair<Int, CaptureFormat>>()
 
     private var currentFilter: Filter = FilterCatalog.original
     private var intensity: Float = 1f
@@ -110,39 +123,81 @@ class CameraController(context: Context) {
         val provider = cameraProvider ?: return
         val owner = boundLifecycleOwner ?: return
         val sp = surfaceProvider ?: return
-        provider.unbindAll()
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        // RAW support is per-lens, so re-query it for this binding before building ImageCapture —
-        // the output format is fixed at build time and can only change by rebinding.
-        rawSupported = queryRawSupport(provider, selector)
-        val preview = Preview.Builder().build().also { it.setSurfaceProvider(sp) }
-        val capture = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setFlashMode(imageFlashMode())
-            .setOutputFormat(outputFormatOf(effectiveFormat()))
-            .build()
-        imageCapture = capture
+        // Format support is per-lens and the output format is fixed when ImageCapture is built, so
+        // both are resolved fresh on every binding.
+        reportedFormats = queryReportedFormats(provider, selector)
+        refreshAvailableFormats()
 
-        val effect = PreviewLutEffect(processor.executor, processor)
-        val group = UseCaseGroup.Builder()
-            .addUseCase(preview)
-            .addUseCase(capture)
-            .addEffect(effect)
-            .build()
-
-        try {
-            camera = provider.bindToLifecycle(owner, selector, group)
-        } catch (e: Exception) {
-            Log.e(TAG, "Use case binding failed", e)
+        val rejected = captureFormat
+        if (!tryBind(provider, owner, sp, selector, rejected) && rejected.writesRaw) {
+            // A camera that advertises a format can still refuse the resulting stream combination.
+            // Remember that, drop back to JPEG and bind again: leaving the session unbound after
+            // unbindAll() is what froze the viewfinder with no way back. Only RAW gets this
+            // treatment — a JPEG failure has nothing to fall back to and is likely transient.
+            unbindable += lensFacing to rejected
+            refreshAvailableFormats()
+            onBindError?.invoke("${rejected.label} isn't supported on this camera — switched to JPEG")
+            tryBind(provider, owner, sp, selector, captureFormat)
         }
+
         // Re-assert the current look + adjustments on the processor for the fresh binding.
         processor.setLut(currentFilter.lutAsset)
         processor.setIntensity(intensity)
         processor.setBrightness(brightnessF)
         processor.setContrast(contrastF)
         processor.setSaturation(saturationF)
-        onRawSupportChanged?.invoke(rawSupported)
+        onFormatsChanged?.invoke(availableFormats, captureFormat)
+    }
+
+    /**
+     * Binds preview + capture for [format], returning false if the device rejects the combination.
+     * On success [camera] and [imageCapture] point at the new session.
+     */
+    private fun tryBind(
+        provider: ProcessCameraProvider,
+        owner: LifecycleOwner,
+        sp: Preview.SurfaceProvider,
+        selector: CameraSelector,
+        format: CaptureFormat,
+    ): Boolean {
+        provider.unbindAll()
+        val preview = Preview.Builder().build().also { it.setSurfaceProvider(sp) }
+        val capture = ImageCapture.Builder()
+            // Low-latency capture opts into zero-shutter-lag paths that conflict with RAW on many
+            // devices — and someone shooting RAW wants the best frame, not the fastest one.
+            .setCaptureMode(
+                if (format.writesRaw) {
+                    ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
+                } else {
+                    ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY
+                },
+            )
+            .setFlashMode(imageFlashMode())
+            .setOutputFormat(outputFormatOf(format))
+            .build()
+
+        val group = UseCaseGroup.Builder()
+            .addUseCase(preview)
+            .addUseCase(capture)
+            .addEffect(PreviewLutEffect(processor.executor, processor))
+            .build()
+
+        return try {
+            camera = provider.bindToLifecycle(owner, selector, group)
+            imageCapture = capture
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Use case binding failed for $format", e)
+            false
+        }
+    }
+
+    /** Drops advertised formats this lens has already refused, keeping [captureFormat] valid. */
+    private fun refreshAvailableFormats() {
+        availableFormats = reportedFormats.filterNot { (lensFacing to it) in unbindable }.toSet()
+        if (captureFormat !in availableFormats) captureFormat = CaptureFormat.JPEG
     }
 
     fun applyFilter(filter: Filter) {
@@ -225,14 +280,10 @@ class CameraController(context: Context) {
 
     /** Selects what the shutter writes. The output format is baked into [ImageCapture], so rebind. */
     fun setCaptureFormat(format: CaptureFormat) {
-        if (captureFormat == format) return
+        if (captureFormat == format || format !in availableFormats) return
         captureFormat = format
         rebindUseCases()
     }
-
-    /** The requested format, downgraded to JPEG when this lens can't write a DNG. */
-    private fun effectiveFormat(): CaptureFormat =
-        if (captureFormat.writesRaw && !rawSupported) CaptureFormat.JPEG else captureFormat
 
     private fun outputFormatOf(format: CaptureFormat): Int = when (format) {
         CaptureFormat.JPEG -> ImageCapture.OUTPUT_FORMAT_JPEG
@@ -240,15 +291,28 @@ class CameraController(context: Context) {
         CaptureFormat.RAW_JPEG -> ImageCapture.OUTPUT_FORMAT_RAW_JPEG
     }
 
-    private fun queryRawSupport(provider: ProcessCameraProvider, selector: CameraSelector): Boolean =
-        try {
-            val info = selector.filter(provider.availableCameraInfos).firstOrNull()
-            info != null && ImageCapture.getImageCaptureCapabilities(info)
-                .supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW)
+    /**
+     * Which formats this lens advertises. RAW and RAW+JPEG are checked separately — a camera can
+     * support one without the other, so a single "does RAW" flag would offer a mode it will reject.
+     */
+    private fun queryReportedFormats(
+        provider: ProcessCameraProvider,
+        selector: CameraSelector,
+    ): Set<CaptureFormat> {
+        val jpegOnly = setOf(CaptureFormat.JPEG)
+        return try {
+            val info = selector.filter(provider.availableCameraInfos).firstOrNull() ?: return jpegOnly
+            val supported = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+            buildSet {
+                add(CaptureFormat.JPEG)
+                if (ImageCapture.OUTPUT_FORMAT_RAW in supported) add(CaptureFormat.RAW)
+                if (ImageCapture.OUTPUT_FORMAT_RAW_JPEG in supported) add(CaptureFormat.RAW_JPEG)
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "RAW capability query failed", e)
-            false
+            Log.e(TAG, "Output format capability query failed", e)
+            jpegOnly
         }
+    }
 
     /** Cycles OFF -> ON -> AUTO. Returns the new mode. */
     fun cycleFlash(): Int {
@@ -281,7 +345,7 @@ class CameraController(context: Context) {
         if (useTorch) runCatching { camera?.cameraControl?.enableTorch(true) }
         val stopTorch = { if (useTorch) runCatching { camera?.cameraControl?.enableTorch(false) } }
 
-        when (effectiveFormat()) {
+        when (captureFormat) {
             CaptureFormat.JPEG -> captureJpeg(capture, stopTorch, onResult, onFailure)
             CaptureFormat.RAW -> captureRaw(capture, stopTorch, onResult, onFailure)
             CaptureFormat.RAW_JPEG -> captureRawAndJpeg(capture, stopTorch, onResult, onFailure)
@@ -388,12 +452,14 @@ class CameraController(context: Context) {
                         val decoded = BitmapIO.load(appContext, Uri.fromFile(temp), CAPTURE_MAX_EDGE)
                             ?: error("Could not decode the captured JPEG")
                         val filtered = captureGpuImage.getBitmapWithFilterApplied(decoded)
+                        // Dimensions describe the DNG; the JPEG's come from its own bitmap.
+                        val (rawWidth, rawHeight) = RawPreview.dimensions(appContext, uri)
                         onResult(
                             CaptureResult.Raw(
                                 dngUri = uri,
                                 dngName = name,
-                                width = filtered.width,
-                                height = filtered.height,
+                                width = rawWidth,
+                                height = rawHeight,
                                 jpeg = CaptureResult.Jpeg(filtered, currentFilter),
                             ),
                         )
