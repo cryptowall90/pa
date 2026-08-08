@@ -8,11 +8,11 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.util.Log
+import com.pictureperfectx.app.capture.GPUImageBokehFilter
 import com.pictureperfectx.app.capture.ImageToner
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
-import jp.co.cyberagent.android.gpuimage.filter.GPUImageGaussianBlurFilter
 import kotlin.math.roundToInt
 
 /**
@@ -28,6 +28,9 @@ import kotlin.math.roundToInt
 object LayerRenderer {
 
     private const val TAG = "LayerRenderer"
+
+    /** Blur strength is quoted against a 1000px short edge; anything else scales from there. */
+    private const val BLUR_REFERENCE_EDGE = 1000f
 
     fun render(context: Context, base: Bitmap, document: Document): Bitmap {
         val layers = document.renderable()
@@ -66,8 +69,18 @@ object LayerRenderer {
         }
 
         is Layer.Blur -> GPUImage(context.applicationContext)
-            .apply { setFilter(GPUImageGaussianBlurFilter(layer.radius.coerceAtLeast(1).toFloat())) }
+            .apply { setFilter(GPUImageBokehFilter(blurRadiusPixels(source, layer.radius))) }
             .getBitmapWithFilterApplied(source)
+    }
+
+    /**
+     * The slider is a strength, not a pixel count. Passing pixels straight through would make the
+     * full-resolution export half as blurred as the preview it was judged on — the same photo, two
+     * different results. Scaling by the image's shorter edge keeps them matching.
+     */
+    private fun blurRadiusPixels(source: Bitmap, strength: Int): Float {
+        val shortEdge = minOf(source.width, source.height).coerceAtLeast(1)
+        return (strength.coerceAtLeast(1) * shortEdge / BLUR_REFERENCE_EDGE).coerceAtLeast(1f)
     }
 
     /**

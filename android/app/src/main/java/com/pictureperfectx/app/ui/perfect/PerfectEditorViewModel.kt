@@ -24,6 +24,8 @@ import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.LayerRenderer
 import com.pictureperfectx.app.layers.Mask
 import com.pictureperfectx.app.layers.MaskBrush
+import com.pictureperfectx.app.layers.SubjectMask
+import com.pictureperfectx.app.layers.SubjectMaskResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -59,6 +61,8 @@ data class PerfectEditUiState(
     /** Brush radius as a fraction of the image's shorter edge. */
     val brushRadius: Float = 0.12f,
     val brushErases: Boolean = false,
+    /** A bokeh layer is waiting on subject detection. */
+    val isDetecting: Boolean = false,
     val isSaving: Boolean = false,
     val ready: Boolean = false,
     val notice: String? = null,
@@ -87,6 +91,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     // the rotate/crop work each frame.
     private var orientedPreview: Bitmap? = null
     private var toneJob: Job? = null
+    private var detectJob: Job? = null
 
     // Undo holds whole documents; a Document stores descriptions rather than pixels, so snapshots
     // are cheap enough for that to be the simplest correct approach.
@@ -311,9 +316,49 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             EffectKind.Tone -> _state.value.document.add {
                 Layer.Tone(it, adjustments = ToneAdjustments(shadows = 25))
             }
-            EffectKind.Bokeh -> _state.value.document.add { Layer.Blur(it, name = "Bokeh") }
+            // A blank mask covers nothing, so the layer waits instead of blurring the whole photo.
+            // Detection fills it in a moment later; that is what makes this bokeh and not a blur.
+            EffectKind.Bokeh -> _state.value.document.add {
+                Layer.Blur(it, name = "Bokeh", mask = Mask.blank())
+            }
         }
         commit(document)
+        if (kind == EffectKind.Bokeh) document.selectedId?.let { detectSubject(it) }
+    }
+
+    /**
+     * Runs detection again for an existing bokeh layer — the way back if the user cropped or
+     * rotated after adding it, or painted the mask into a mess.
+     */
+    fun onDetectSubject(id: Long) = detectSubject(id)
+
+    /**
+     * Finds the subject and masks the background behind it.
+     *
+     * Deliberately a one-shot when the layer is added, never part of rendering: a segmentation pass
+     * costs far more than the blur it feeds, and the preview re-renders on every slider tick.
+     */
+    private fun detectSubject(layerId: Long) {
+        val source = orientedPreview ?: return
+        detectJob?.cancel()
+        _state.update { it.copy(isDetecting = true) }
+        detectJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.Default) { SubjectMask.background(source) }
+            // The layer can be gone by now — undo, or a quick delete while detection ran.
+            if (_state.value.document.layers.none { it.id == layerId }) {
+                _state.update { it.copy(isDetecting = false) }
+                return@launch
+            }
+            when (result) {
+                is SubjectMaskResult.Found -> {
+                    _state.update { it.copy(isDetecting = false) }
+                    commit(_state.value.document.setMask(layerId, result.mask))
+                }
+                // The mask stays blank, so nothing is blurred and the brush is the way forward.
+                is SubjectMaskResult.NotFound ->
+                    _state.update { it.copy(isDetecting = false, notice = result.reason) }
+            }
+        }
     }
 
     fun onSelectLayer(id: Long) = applyDocument(_state.value.document.select(id), record = false)
@@ -414,6 +459,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         toneJob?.cancel()
+        detectJob?.cancel()
         super.onCleared()
     }
 

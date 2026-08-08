@@ -80,6 +80,10 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
 
+    // On-device subject detection for bokeh. The bundled variant ships the model in the APK, so it
+    // works with no network and no Play Services.
+    implementation(libs.mlkit.segmentation.selfie)
+
     // GPU filter engine + permissions + image loading
     implementation(libs.gpuimage)
     implementation(libs.accompanist.permissions)
