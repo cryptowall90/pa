@@ -96,6 +96,9 @@ class CameraController(context: Context) {
     // What ImageCapture was actually built with, which decides how takePicture must be called.
     private var boundOutputFormat: Int = ImageCapture.OUTPUT_FORMAT_JPEG
 
+    // Whether this camera can emit RAW and JPEG together — the source of the RAW display proxy.
+    private var rawJpegSupported: Boolean = false
+
     private var currentFilter: Filter = FilterCatalog.original
     private var intensity: Float = 1f
 
@@ -127,8 +130,7 @@ class CameraController(context: Context) {
         // Format support is per-lens and the output format is fixed when ImageCapture is built, so
         // it's resolved fresh on every binding. This pre-bind guess picks the first camera matching
         // the selector; it's corrected below from the camera actually bound.
-        availableFormats = queryReportedFormats(cameraInfoFor(provider, selector))
-        if (captureFormat !in availableFormats) captureFormat = CaptureFormat.JPEG
+        applySupport(cameraInfoFor(provider, selector))
 
         val rejected = captureFormat
         if (!tryBind(provider, owner, sp, selector, rejected) && rejected.writesRaw) {
@@ -144,7 +146,7 @@ class CameraController(context: Context) {
 
         // The bound camera is authoritative: on multi-camera devices the pre-bind guess above can
         // describe a different physical sensor than the one CameraX actually opened.
-        camera?.cameraInfo?.let { availableFormats = queryReportedFormats(it) }
+        camera?.cameraInfo?.let(::applySupport)
 
         // Re-assert the current look + adjustments on the processor for the fresh binding.
         processor.setLut(currentFilter.lutAsset)
@@ -281,7 +283,7 @@ class CameraController(context: Context) {
         rebindUseCases()
     }
 
-    // ---- Capture format (JPEG / RAW / RAW+JPEG) -------------------------------------------------
+    // ---- Capture format (JPEG / RAW) ------------------------------------------------------------
 
     /** Selects what the shutter writes. The output format is baked into [ImageCapture], so rebind. */
     fun setCaptureFormat(format: CaptureFormat) {
@@ -291,19 +293,14 @@ class CameraController(context: Context) {
     }
 
     /**
-     * RAW-only rides on the RAW+JPEG stream where the camera supports it, so the JPEG half can be
+     * RAW rides on the camera's RAW+JPEG stream where that exists, purely so the JPEG half can be
      * kept as a private full-resolution proxy. Nothing extra reaches the user's gallery — a DNG's
      * own preview is capped at 256px, which is all the app would otherwise have to show.
      */
     private fun outputFormatOf(format: CaptureFormat): Int = when (format) {
         CaptureFormat.JPEG -> ImageCapture.OUTPUT_FORMAT_JPEG
         CaptureFormat.RAW ->
-            if (CaptureFormat.RAW_JPEG in availableFormats) {
-                ImageCapture.OUTPUT_FORMAT_RAW_JPEG
-            } else {
-                ImageCapture.OUTPUT_FORMAT_RAW
-            }
-        CaptureFormat.RAW_JPEG -> ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+            if (rawJpegSupported) ImageCapture.OUTPUT_FORMAT_RAW_JPEG else ImageCapture.OUTPUT_FORMAT_RAW
     }
 
     private fun cameraInfoFor(provider: ProcessCameraProvider, selector: CameraSelector): CameraInfo? =
@@ -315,22 +312,27 @@ class CameraController(context: Context) {
         }
 
     /**
-     * Which formats a camera advertises. RAW and RAW+JPEG are checked separately — a camera can
-     * support one without the other, so a single "does RAW" flag would offer a mode it will reject.
+     * Records what this camera can produce. RAW is offered if the camera can write a DNG *either*
+     * on its own or as part of a RAW+JPEG capture — the latter is preferred internally because its
+     * JPEG half becomes the private display proxy, but it is never a mode the user picks.
      */
-    private fun queryReportedFormats(info: CameraInfo?): Set<CaptureFormat> {
-        val jpegOnly = setOf(CaptureFormat.JPEG)
-        if (info == null) return jpegOnly
+    private fun applySupport(info: CameraInfo?) {
+        val supported = supportedOutputFormats(info)
+        rawJpegSupported = ImageCapture.OUTPUT_FORMAT_RAW_JPEG in supported
+        availableFormats = buildSet {
+            add(CaptureFormat.JPEG)
+            if (rawJpegSupported || ImageCapture.OUTPUT_FORMAT_RAW in supported) add(CaptureFormat.RAW)
+        }
+        if (captureFormat !in availableFormats) captureFormat = CaptureFormat.JPEG
+    }
+
+    private fun supportedOutputFormats(info: CameraInfo?): Set<Int> {
+        if (info == null) return emptySet()
         return try {
-            val supported = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
-            buildSet {
-                add(CaptureFormat.JPEG)
-                if (ImageCapture.OUTPUT_FORMAT_RAW in supported) add(CaptureFormat.RAW)
-                if (ImageCapture.OUTPUT_FORMAT_RAW_JPEG in supported) add(CaptureFormat.RAW_JPEG)
-            }
+            ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
         } catch (e: Exception) {
             Log.e(TAG, "Output format capability query failed", e)
-            jpegOnly
+            emptySet()
         }
     }
 
@@ -368,7 +370,6 @@ class CameraController(context: Context) {
         when (captureFormat) {
             CaptureFormat.JPEG -> captureJpeg(capture, stopTorch, onResult, onFailure)
             CaptureFormat.RAW -> captureRaw(capture, stopTorch, onResult, onFailure)
-            CaptureFormat.RAW_JPEG -> captureRawAndJpeg(capture, stopTorch, onResult, onFailure)
         }
     }
 
@@ -430,7 +431,7 @@ class CameraController(context: Context) {
                             return
                         }
                         val (w, h) = RawPreview.dimensions(appContext, uri)
-                        onResult(CaptureResult.Raw(uri, name, w, h, jpeg = null))
+                        onResult(CaptureResult.Raw(uri, name, w, h))
                     }
 
                     override fun onError(exception: ImageCaptureException) {
@@ -479,7 +480,6 @@ class CameraController(context: Context) {
                             dngName = name,
                             width = w,
                             height = h,
-                            jpeg = null,
                             proxyPath = proxy?.let { Uri.fromFile(it).toString() },
                         ),
                     )
@@ -489,83 +489,6 @@ class CameraController(context: Context) {
                     if (failed.compareAndSet(false, true)) {
                         stopTorch()
                         jpegTarget.delete()
-                        onFailure(exception)
-                    }
-                }
-            },
-        )
-    }
-
-    /**
-     * RAW+JPEG: the DNG goes to MediaStore, but CameraX writes the JPEG itself and knows nothing
-     * about our look — so that half is rendered through the active filter and handed back for the
-     * caller to save. The callback fires once per file.
-     *
-     * CameraX's JPEG is *unfiltered*, which makes it the ideal display proxy for the DNG: it's
-     * full-resolution and shows exactly what the raw file holds. It's kept rather than discarded,
-     * so the RAW entry is sharp without a second capture or any extra stream.
-     */
-    private fun captureRawAndJpeg(
-        capture: ImageCapture,
-        stopTorch: () -> Unit,
-        onResult: (CaptureResult) -> Unit,
-        onFailure: (Throwable) -> Unit,
-    ) {
-        val base = PhotoSaver.baseName()
-        val name = "$base.dng"
-        val proxy = ProxyStore.newProxyFile(appContext, base)
-        val temp = proxy ?: File.createTempFile("ppx_capture", ".jpg", appContext.cacheDir)
-        val jpegOptions = ImageCapture.OutputFileOptions.Builder(temp)
-            .setMetadata(ImageCapture.Metadata().apply { isReversedHorizontal = isFront() })
-            .build()
-
-        val pending = AtomicInteger(2)
-        val failed = AtomicBoolean(false)
-        var dngUri: Uri? = null
-
-        capture.takePicture(
-            dngOutputOptions(name),
-            jpegOptions,
-            captureExecutor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    // Only the MediaStore-backed half reports a content URI; the JPEG went to a file.
-                    outputFileResults.savedUri
-                        ?.takeIf { it.scheme == "content" }
-                        ?.let { dngUri = it }
-                    if (pending.decrementAndGet() > 0 || failed.get()) return
-                    stopTorch()
-                    var keepProxy = false
-                    try {
-                        val uri = dngUri ?: error("RAW capture returned no URI")
-                        val decoded = BitmapIO.load(appContext, Uri.fromFile(temp), CAPTURE_MAX_EDGE)
-                            ?: error("Could not decode the captured JPEG")
-                        val filtered = captureGpuImage.getBitmapWithFilterApplied(decoded)
-                        // Dimensions describe the DNG; the JPEG's come from its own bitmap.
-                        val (rawWidth, rawHeight) = RawPreview.dimensions(appContext, uri)
-                        onResult(
-                            CaptureResult.Raw(
-                                dngUri = uri,
-                                dngName = name,
-                                width = rawWidth,
-                                height = rawHeight,
-                                jpeg = CaptureResult.Jpeg(filtered, currentFilter),
-                                proxyPath = proxy?.let { Uri.fromFile(it).toString() },
-                            ),
-                        )
-                        keepProxy = proxy != null
-                    } catch (e: Exception) {
-                        onFailure(e)
-                    } finally {
-                        // Nothing references the file unless it became a proxy for the RAW entry.
-                        if (!keepProxy) temp.delete()
-                    }
-                }
-
-                override fun onError(exception: ImageCaptureException) {
-                    if (failed.compareAndSet(false, true)) {
-                        stopTorch()
-                        temp.delete()
                         onFailure(exception)
                     }
                 }

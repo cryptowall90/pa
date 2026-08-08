@@ -52,13 +52,13 @@ Fully native Kotlin. No cross-platform runtime.
    `DCIM/PicturePerfectX` via MediaStore (so shots appear in the phone gallery
    alongside camera photos).
 
-### RAW capture (JPEG / RAW / RAW+JPEG)
+### RAW capture (JPEG / RAW)
 
-- A **format chip** in the camera top bar cycles `JPEG → RAW → RAW+JPEG`, offering only the formats
-  the current lens can actually deliver. `RAW` and `RAW+JPEG` are checked **separately** per lens
-  via `ImageCapture.getImageCaptureCapabilities` — a camera can support one without the other.
+- A **format chip** in the camera top bar switches between `JPEG` and `RAW`, appearing only on
+  lenses that can actually produce a DNG (checked per-lens via
+  `ImageCapture.getImageCaptureCapabilities`).
 - **RAW is never filtered.** A DNG is unprocessed sensor data by definition, so looks are baked
-  into JPEGs only. In `RAW+JPEG` the DNG is saved untouched and the JPEG gets the active LUT.
+  into JPEGs only. RAW saves the `.dng` alone to the phone gallery.
 - DNGs are written by CameraX straight into `DCIM/PicturePerfectX` alongside the JPEGs, so they
   show up in the phone's gallery and import into desktop RAW tools.
 - **RAW-only shoots without the preview filter.** The LUT never reaches a DNG, so attaching it would
@@ -71,21 +71,16 @@ Fully native Kotlin. No cross-platform runtime.
   that stays until acknowledged. The format remains selectable so it can be retried. RAW also uses
   `CAPTURE_MODE_MAXIMIZE_QUALITY`, since low-latency capture opts into zero-shutter-lag paths that
   conflict with RAW on many devices.
-- `RAW+JPEG` writes two files, so it produces **two gallery entries** mirroring the phone gallery:
-  the DNG on its own, and the filtered JPEG as an ordinary editable photo. Deleting one leaves the
-  other.
 - DNG entries carry a **`RAW` badge**.
 - **RAW shots stay sharp in the app.** Android's `DngCreator` caps a DNG's embedded preview at
   **256 px**, and phones that can't demosaic RAW have nothing better to show — so every RAW capture
   keeps a full-resolution, **unfiltered** JPEG in app-private storage (`capture/ProxyStore.kt`).
   It never appears in the phone's gallery, the DNG is untouched, and it's what the grid, viewer and
   both editors actually draw — which is also what lets a RAW edit save at full resolution.
-  It's deleted with its gallery entry.
-  - In **RAW+JPEG** this is free: CameraX's own JPEG is unfiltered, so it's kept as the proxy
-    instead of being discarded after the filtered copy is made.
-  - In **RAW-only** the shot rides the RAW+JPEG stream to obtain the same file, with the JPEG half
-    routed to private storage rather than the gallery. Where a lens can't do RAW+JPEG, RAW-only
-    still works — just without a proxy.
+  It's deleted with its gallery entry. To obtain that file the shot rides the camera's RAW+JPEG
+  stream where one exists, routing the JPEG half to private storage rather than the gallery — the
+  user still gets only a `.dng`. Where a lens can't do RAW+JPEG, RAW still works, just without a
+  proxy.
 - **RAW photos can be edited.** Android's Java decoders don't guarantee DNG support, so the editor
   attempts a full decode and falls back to the embedded preview, telling you when that means the
   saved photo will be lower resolution. Edits always save as a **new JPEG** — a DNG is never
@@ -139,7 +134,8 @@ geometry:
 ### Light editor (`ui/edit/`)
 
 - Re-edit a saved photo (Edit in the viewer) or **import a device photo** (the
-  system photo picker — no extra permission) into the editor.
+  system photo picker — no extra permission). Either way a named chooser asks for
+  **Light Edit** or **Perfect Editor**, so both surfaces are discoverable by name.
 - Same looks + intensity + **exposure / brightness / contrast / saturation** as the
   camera, rendered live via `capture/ImageEditor.kt` (GPUImage off-screen).
 - **Press and hold** the preview to compare against the unedited original.

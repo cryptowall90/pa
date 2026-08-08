@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,7 +37,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -160,10 +160,12 @@ fun GalleryScreen(
     var viewingId by remember { mutableStateOf<Long?>(null) }
     var confirmSelected by remember { mutableStateOf(false) }
     var confirmSingle by remember { mutableStateOf<PhotoEntity?>(null) }
+    // Set once a source is chosen; the editor is picked by name rather than by guessing an icon.
+    var chooseEditorFor by remember { mutableStateOf<Uri?>(null) }
 
     val pickImage = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia(),
-    ) { uri -> uri?.let(onEdit) }
+    ) { uri -> chooseEditorFor = uri }
 
     // Back exits selection first, then the screen.
     BackHandler(enabled = selectionMode) { viewModel.clearSelection() }
@@ -265,11 +267,18 @@ fun GalleryScreen(
                 startIndex = startIndex,
                 onClose = { viewingId = null },
                 // Editors get the sharpest source available, which for a RAW means its proxy.
-                onEdit = { photo -> onEdit(Uri.parse(photo.displayUri)) },
-                onPerfectEdit = { photo -> onPerfectEdit(Uri.parse(photo.displayUri)) },
+                onEdit = { photo -> chooseEditorFor = Uri.parse(photo.displayUri) },
                 onDelete = { photo -> confirmSingle = photo },
             )
         }
+    }
+
+    chooseEditorFor?.let { source ->
+        EditorChoiceDialog(
+            onLightEdit = { chooseEditorFor = null; onEdit(source) },
+            onPerfectEdit = { chooseEditorFor = null; onPerfectEdit(source) },
+            onDismiss = { chooseEditorFor = null },
+        )
     }
 
     if (confirmSelected) {
@@ -285,6 +294,48 @@ fun GalleryScreen(
             onConfirm = { viewModel.deleteSingle(photo); confirmSingle = null; viewingId = null },
             onDismiss = { confirmSingle = null },
         )
+    }
+}
+
+/** Names the two editing surfaces rather than leaving them as icons the user has to decode. */
+@Composable
+private fun EditorChoiceDialog(
+    onLightEdit: () -> Unit,
+    onPerfectEdit: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit photo") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                EditorChoice(
+                    name = "Light Edit",
+                    description = "Looks, intensity, exposure, brightness, contrast and saturation.",
+                    onClick = onLightEdit,
+                )
+                EditorChoice(
+                    name = "Perfect Editor",
+                    description = "Crop, aspect ratios, straighten, rotate and flip.",
+                    onClick = onPerfectEdit,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun EditorChoice(name: String, description: String, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+    ) {
+        Text(text = name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Brand)
+        Text(text = description, fontSize = 13.sp)
     }
 }
 
@@ -331,7 +382,6 @@ private fun PhotoPager(
     startIndex: Int,
     onClose: () -> Unit,
     onEdit: (PhotoEntity) -> Unit,
-    onPerfectEdit: (PhotoEntity) -> Unit,
     onDelete: (PhotoEntity) -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -379,9 +429,6 @@ private fun PhotoPager(
                     RawBadge(modifier = Modifier.padding(start = 8.dp))
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                IconButton(onClick = { onPerfectEdit(current) }) {
-                    Icon(Icons.Filled.Crop, contentDescription = "Perfect Editor", tint = Color.White)
-                }
                 IconButton(onClick = { onEdit(current) }) {
                     Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
                 }

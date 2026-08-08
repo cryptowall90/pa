@@ -62,7 +62,7 @@ private fun CircleIconButton(
     }
 }
 
-/** Pill showing what the shutter writes; tapping it cycles JPEG -> RAW -> RAW+JPEG. */
+/** Pill showing what the shutter writes; tapping it switches between JPEG and RAW. */
 @Composable
 private fun CaptureFormatChip(format: CaptureFormat, onClick: () -> Unit) {
     Box(

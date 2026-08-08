@@ -100,7 +100,7 @@ fun CameraScreen(
                     CameraNotice(
                         text = "RAW saves unprocessed sensor data, so filters and the brightness, " +
                             "contrast and saturation sliders don't apply. Exposure still does. " +
-                            "Shoot RAW+JPEG to get a filtered photo alongside the raw file.",
+                            "Switch to JPEG when you want your look baked into the photo.",
                         onDismiss = viewModel::onDismissRawNotice,
                         onNeverShowAgain = viewModel::onNeverShowRawNotice,
                     )

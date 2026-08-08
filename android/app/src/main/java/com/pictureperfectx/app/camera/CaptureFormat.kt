@@ -13,7 +13,6 @@ import com.pictureperfectx.app.filter.Filter
 enum class CaptureFormat(val label: String) {
     JPEG("JPEG"),
     RAW("RAW"),
-    RAW_JPEG("RAW+JPEG"),
     ;
 
     val writesRaw: Boolean get() = this != JPEG
@@ -45,16 +44,14 @@ sealed interface CaptureResult {
     /**
      * A DNG already written to MediaStore by CameraX.
      *
-     * [jpeg] carries the filtered companion still in RAW+JPEG mode. [proxyPath] points at the
-     * app-private, unfiltered full-resolution stand-in written for a RAW-only shot — a DNG's own
-     * embedded preview tops out at 256px, so without it the photo can only be shown soft.
+     * [proxyPath] points at the app-private, unfiltered full-resolution stand-in kept for it — a
+     * DNG's own embedded preview tops out at 256px, so without it the photo can only be shown soft.
      */
     data class Raw(
         val dngUri: Uri,
         val dngName: String,
         val width: Int,
         val height: Int,
-        val jpeg: Jpeg?,
         val proxyPath: String? = null,
     ) : CaptureResult
 }

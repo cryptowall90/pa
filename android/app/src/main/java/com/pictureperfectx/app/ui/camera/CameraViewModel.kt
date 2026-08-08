@@ -169,10 +169,7 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun persist(result: CaptureResult) {
         viewModelScope.launch {
-            val bitmap = when (result) {
-                is CaptureResult.Jpeg -> result.bitmap
-                is CaptureResult.Raw -> result.jpeg?.bitmap
-            }
+            val bitmap = (result as? CaptureResult.Jpeg)?.bitmap
             try {
                 val indexed = withContext(Dispatchers.IO) { record(result) }
                 _state.update { it.copy(isSaving = false, lastSavedThumbUri = indexed) }
@@ -195,30 +192,15 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         is CaptureResult.Raw -> {
-            val jpeg = result.jpeg
             val raw = result.dngUri.toString()
-            // A DNG carries no look, so it's always indexed as Original rather than claiming the
-            // active filter was applied to unprocessed sensor data.
-            val rawEntity = entity(
-                raw, result.dngName, FilterCatalog.original, result.width, result.height, raw, result.proxyPath,
+            // A DNG carries no look, so it's indexed as Original rather than claiming the active
+            // filter was applied to unprocessed sensor data.
+            repository.record(
+                entity(
+                    raw, result.dngName, FilterCatalog.original, result.width, result.height, raw, result.proxyPath,
+                ),
             )
-
-            if (jpeg != null) {
-                // RAW+JPEG writes two files, so the app gallery gets two independent entries to
-                // match the phone gallery: the DNG on its own, and the filtered JPEG as an ordinary
-                // editable photo. The DNG is inserted first so the JPEG takes the higher row id and
-                // sorts ahead of it when their timestamps tie.
-                repository.record(rawEntity)
-                val name = result.dngName.removeSuffix(".dng") + ".jpg"
-                val saved = PhotoSaver.save(getApplication(), jpeg.bitmap, name)
-                repository.record(
-                    entity(saved.uri.toString(), saved.displayName, jpeg.filter, saved.width, saved.height, null),
-                )
-                saved.uri.toString()
-            } else {
-                repository.record(rawEntity)
-                raw
-            }
+            raw
         }
     }
 
@@ -242,11 +224,8 @@ class CameraViewModel(app: Application) : AndroidViewModel(app) {
         proxyUri = proxyUri,
     )
 
-    private fun savedMessage(result: CaptureResult): String = when {
-        result !is CaptureResult.Raw -> "Saved to your gallery"
-        result.jpeg != null -> "Saved RAW + JPEG to your gallery"
-        else -> "Saved RAW to your gallery"
-    }
+    private fun savedMessage(result: CaptureResult): String =
+        if (result is CaptureResult.Raw) "Saved RAW to your gallery" else "Saved to your gallery"
 
     private fun emit(event: CameraEvent) {
         viewModelScope.launch { _events.send(event) }
