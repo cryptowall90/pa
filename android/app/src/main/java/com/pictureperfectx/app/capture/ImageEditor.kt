@@ -7,6 +7,7 @@ import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageBrightnessFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageContrastFilter
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageExposureFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageFilterGroup
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageSaturationFilter
@@ -24,6 +25,7 @@ object ImageEditor {
         source: Bitmap,
         filter: Filter,
         intensity: Int,
+        exposure: Int,
         brightness: Int,
         contrast: Int,
         saturation: Int,
@@ -32,6 +34,7 @@ object ImageEditor {
         val filters = ArrayList<GPUImageFilter>()
         FilterFactory.create(context, filter, intensity.coerceIn(0, 100) / 100f).lookup
             ?.let { filters.add(it) }
+        filters.add(GPUImageExposureFilter(exposure.coerceIn(-100, 100) / 50f)) // ~ -2..2 EV
         filters.add(GPUImageBrightnessFilter(brightness.coerceIn(-100, 100) / 200f))
         filters.add(GPUImageContrastFilter(1f + contrast.coerceIn(-100, 100) / 100f))
         filters.add(GPUImageSaturationFilter(1f + saturation.coerceIn(-100, 100) / 100f))

@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,12 +35,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -65,6 +69,7 @@ fun EditScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    var showOriginal by remember { mutableStateOf(false) }
 
     LaunchedEffect(sourceUri) { viewModel.load(sourceUri) }
     LaunchedEffect(state.savedMessage) {
@@ -104,19 +109,52 @@ fun EditScreen(
             }
 
             Box(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .pointerInput(state.original) {
+                        // Press and hold to compare against the unedited original.
+                        detectTapGestures(onPress = {
+                            showOriginal = true
+                            tryAwaitRelease()
+                            showOriginal = false
+                        })
+                    },
                 contentAlignment = Alignment.Center,
             ) {
-                val preview = state.preview
-                if (preview != null) {
+                val shown = if (showOriginal) state.original else state.preview
+                if (shown != null) {
                     Image(
-                        bitmap = preview.asImageBitmap(),
+                        bitmap = shown.asImageBitmap(),
                         contentDescription = "Preview",
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize().padding(8.dp),
                     )
                 } else {
                     CircularProgressIndicator(color = Brand)
+                }
+                if (showOriginal) {
+                    Text(
+                        text = "Original",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .padding(top = 12.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x66000000))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                } else if (state.ready) {
+                    Text(
+                        text = "Hold to compare",
+                        color = Color(0x99FFFFFF),
+                        fontSize = 11.sp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 8.dp),
+                    )
                 }
             }
 
@@ -126,10 +164,12 @@ fun EditScreen(
             ) {
                 EditAdjust(
                     selected = state.selectedAdjustment,
+                    exposure = state.exposure,
                     brightness = state.brightness,
                     contrast = state.contrast,
                     saturation = state.saturation,
                     onSelect = viewModel::onSelectAdjustment,
+                    onExposure = viewModel::onExposureChanged,
                     onBrightness = viewModel::onBrightnessChanged,
                     onContrast = viewModel::onContrastChanged,
                     onSaturation = viewModel::onSaturationChanged,
@@ -152,20 +192,22 @@ fun EditScreen(
     }
 }
 
-/** Compact brightness/contrast/saturation control: chip row + single slider (no exposure). */
+/** Compact exposure/brightness/contrast/saturation control: chip row + single slider. */
 @Composable
 private fun EditAdjust(
     selected: Adjustment,
+    exposure: Int,
     brightness: Int,
     contrast: Int,
     saturation: Int,
     onSelect: (Adjustment) -> Unit,
+    onExposure: (Int) -> Unit,
     onBrightness: (Int) -> Unit,
     onContrast: (Int) -> Unit,
     onSaturation: (Int) -> Unit,
 ) {
-    val chips = listOf(Adjustment.Brightness, Adjustment.Contrast, Adjustment.Saturation)
-    val active = if (selected in chips) selected else Adjustment.Brightness
+    val chips = listOf(Adjustment.Exposure, Adjustment.Brightness, Adjustment.Contrast, Adjustment.Saturation)
+    val active = if (selected in chips) selected else Adjustment.Exposure
 
     Column(
         modifier = Modifier
@@ -198,6 +240,7 @@ private fun EditAdjust(
             }
         }
         val value = when (active) {
+            Adjustment.Exposure -> exposure
             Adjustment.Contrast -> contrast
             Adjustment.Saturation -> saturation
             else -> brightness
@@ -208,6 +251,7 @@ private fun EditAdjust(
                 onValueChange = {
                     val v = it.toInt()
                     when (active) {
+                        Adjustment.Exposure -> onExposure(v)
                         Adjustment.Contrast -> onContrast(v)
                         Adjustment.Saturation -> onSaturation(v)
                         else -> onBrightness(v)

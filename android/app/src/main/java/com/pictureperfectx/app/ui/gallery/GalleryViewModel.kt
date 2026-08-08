@@ -1,13 +1,10 @@
 package com.pictureperfectx.app.ui.gallery
 
 import android.app.Application
-import android.net.Uri
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pictureperfectx.app.PicturePerfectApp
 import com.pictureperfectx.app.data.PhotoEntity
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -15,11 +12,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
- * Backs the in-app gallery from the local Room index. Reading, multi-select and deleting stay
- * entirely on-device (Room + MediaStore); no network is involved.
+ * Backs the in-app gallery from the local Room index.
+ *
+ * Deleting here removes a photo from the **app's** gallery (its Room index row) only — the image
+ * file stays on the device, so it remains in the phone's gallery. Fully on-device; no network.
  */
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -39,25 +37,16 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearSelection() = _selected.update { emptySet() }
 
-    /** Delete every currently selected photo (call after the user confirms). */
+    /** Remove every selected photo from the app gallery (files stay on the device). */
     fun deleteSelected() {
         val ids = _selected.value
         if (ids.isEmpty()) return
-        val toDelete = photos.value.filter { it.id in ids }
         clearSelection()
-        viewModelScope.launch { withContext(Dispatchers.IO) { toDelete.forEach { deleteOne(it) } } }
+        viewModelScope.launch { ids.forEach { repository.remove(it) } }
     }
 
-    /** Delete a single photo (call after the user confirms). */
+    /** Remove a single photo from the app gallery (file stays on the device). */
     fun deleteSingle(photo: PhotoEntity) {
-        viewModelScope.launch { withContext(Dispatchers.IO) { deleteOne(photo) } }
-    }
-
-    private suspend fun deleteOne(photo: PhotoEntity) {
-        // We own these files, so a direct MediaStore delete succeeds; ignore if already gone.
-        runCatching {
-            getApplication<Application>().contentResolver.delete(Uri.parse(photo.uri), null, null)
-        }.onFailure { Log.w("GalleryViewModel", "MediaStore delete failed", it) }
-        repository.remove(photo.id)
+        viewModelScope.launch { repository.remove(photo.id) }
     }
 }
