@@ -1,7 +1,9 @@
 package com.pictureperfectx.app.ui.perfect
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -10,6 +12,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,7 +37,6 @@ import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,7 +46,6 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -57,32 +58,45 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.capture.AspectRatio
 import com.pictureperfectx.app.capture.CropMath
-import com.pictureperfectx.app.capture.ToneAdjustments
-import com.pictureperfectx.app.capture.ToneBand
-import com.pictureperfectx.app.layers.BlendMode
+import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.layers.Layer
+import com.pictureperfectx.app.layers.Mask
+import com.pictureperfectx.app.layers.MaskPoint
+import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.ui.components.CameraNotice
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val Brand = Color(0xFFFF4D6D)
 
+/** How strongly a selected area is tinted, out of 255. Enough to read, light enough to see through. */
+private const val SELECTION_TINT_ALPHA = 80
+
 /**
- * The Perfect Editor's first surface: geometry. Crop with a draggable frame, lock to an aspect
- * ratio, straighten, rotate in quarter turns and flip — then save as a **new** photo.
+ * The Perfect Editor: crop and geometry, plus a stack of masked effect layers.
+ *
+ * Every control lives in the column *beneath* the photo, never over it. The photo gets whatever
+ * height is left, so adjusting a slider always means watching the picture change — which is the
+ * one thing a dialog full of sliders made impossible.
  */
 @Composable
 fun PerfectEditorScreen(
@@ -93,8 +107,7 @@ fun PerfectEditorScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
-    var showEffectPicker by remember { mutableStateOf(false) }
-    var showLayerSettings by remember { mutableStateOf(false) }
+    var addingEffect by remember { mutableStateOf(false) }
 
     LaunchedEffect(sourceUri) { viewModel.load(sourceUri) }
     LaunchedEffect(state.savedMessage) {
@@ -151,29 +164,29 @@ fun PerfectEditorScreen(
                 }
             }
 
-            CropStage(
+            EditorStage(
                 state = state,
                 onCropChanged = viewModel::onCropChanged,
                 onPaint = viewModel::onPaintMask,
                 onStrokeEnd = viewModel::endStroke,
+                onLasso = viewModel::onLassoCommitted,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
 
             Column(
-                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 state.notice?.let { CameraNotice(text = it, onDismiss = viewModel::consumeNotice) }
 
                 ToolSwitch(selected = state.tool, onSelect = viewModel::onSelectTool)
 
                 when (state.tool) {
-                    PerfectTool.Effects -> EffectsBar(
+                    PerfectTool.Effects -> EffectsControls(
                         state = state,
-                        onAddEffect = { showEffectPicker = true },
-                        onSelectLayer = viewModel::onSelectLayer,
-                        onOpenSettings = { showLayerSettings = true },
-                        onToggleVisible = viewModel::onToggleLayerVisibility,
+                        viewModel = viewModel,
+                        addingEffect = addingEffect,
+                        onAddingEffect = { addingEffect = it },
                     )
 
                     PerfectTool.Crop -> {
@@ -200,47 +213,28 @@ fun PerfectEditorScreen(
                         }
                         AspectRow(selected = state.geometry.aspect, onSelect = viewModel::onAspectSelected)
                     }
-
                 }
             }
         }
     }
-
-    if (showEffectPicker) {
-        EffectPickerDialog(
-            onPick = { kind ->
-                showEffectPicker = false
-                viewModel.onAddEffect(kind)
-                // Open its settings immediately: an effect whose controls aren't reachable is an
-                // effect that looks broken.
-                showLayerSettings = true
-            },
-            onDismiss = { showEffectPicker = false },
-        )
-    }
-
-    state.document.selected?.let { layer ->
-        if (showLayerSettings) {
-            LayerSettingsDialog(
-                layer = layer,
-                state = state,
-                viewModel = viewModel,
-                onDismiss = { showLayerSettings = false },
-            )
-        }
-    }
 }
 
-/** The image plus its crop frame. The frame is positioned against where the image actually lands. */
+// ---- Stage --------------------------------------------------------------------------------------
+
+/**
+ * The photo, plus whichever overlay the current tool needs: the crop frame, or a surface for
+ * drawing the area an effect applies to.
+ */
 @Composable
-private fun CropStage(
+private fun EditorStage(
     state: PerfectEditUiState,
-    onCropChanged: (com.pictureperfectx.app.capture.CropRect) -> Unit,
+    onCropChanged: (CropRect) -> Unit,
     onPaint: (Float, Float) -> Unit,
     onStrokeEnd: () -> Unit,
+    onLasso: (List<MaskPoint>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var stageSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    var stageSize by remember { mutableStateOf(IntSize.Zero) }
     val canvas = state.canvas
 
     Box(
@@ -259,7 +253,7 @@ private fun CropStage(
             modifier = Modifier.fillMaxSize().padding(12.dp),
         )
 
-        // ContentScale.Fit letterboxes, so work out the drawn rectangle to anchor the crop frame.
+        // ContentScale.Fit letterboxes, so work out the drawn rectangle to anchor everything else.
         val bounds = remember(stageSize, canvas.width, canvas.height) {
             fittedBounds(
                 containerWidth = stageSize.width.toFloat(),
@@ -270,16 +264,30 @@ private fun CropStage(
             )
         }
 
+        // A subtle effect wouldn't show its own boundary, so the chosen area is tinted. Without
+        // this, drawing an area before picking an effect would look like nothing had happened.
+        if (state.canSelect) {
+            state.activeMask?.let { mask ->
+                SelectionTint(mask = mask, imageBounds = bounds, modifier = Modifier.fillMaxSize())
+            }
+        }
+
         when {
+            state.canSelect && state.selectionTool == SelectionTool.Lasso -> LassoSurface(
+                imageBounds = bounds,
+                onCommit = onLasso,
+                modifier = Modifier.fillMaxSize(),
+            )
+
             // Painting takes over the drag gesture rather than competing with the crop frame.
-            state.canPaintMask -> MaskPaintSurface(
+            state.canSelect -> MaskPaintSurface(
                 imageBounds = bounds,
                 onPaint = onPaint,
                 onStrokeEnd = onStrokeEnd,
                 modifier = Modifier.fillMaxSize(),
             )
 
-            // The crop frame would only get in the way while judging tone, so it's crop-mode only.
+            // The crop frame would only get in the way while judging an effect, so it's crop-only.
             state.tool == PerfectTool.Crop -> CropOverlay(
                 crop = state.geometry.crop,
                 imageBounds = bounds,
@@ -292,11 +300,100 @@ private fun CropStage(
     }
 }
 
+/** Tints the chosen area over the photo, so a selection is visible before any effect lands on it. */
+@Composable
+private fun SelectionTint(mask: Mask, imageBounds: Rect, modifier: Modifier = Modifier) {
+    // The coverage grid is far smaller than the photo; drawing it scaled up gets the soft edge for
+    // free, the same way LayerRenderer applies a mask.
+    val tint = remember(mask) {
+        val pixels = IntArray(mask.columns * mask.rows) { index ->
+            val coverage = mask.coverageAt(index % mask.columns, index / mask.columns)
+            val alpha = (coverage.coerceIn(0f, 1f) * SELECTION_TINT_ALPHA).roundToInt()
+            (alpha shl 24) or 0x00FF4D6D
+        }
+        Bitmap.createBitmap(pixels, mask.columns, mask.rows, Bitmap.Config.ARGB_8888).asImageBitmap()
+    }
+    Canvas(modifier = modifier) {
+        if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@Canvas
+        drawImage(
+            image = tint,
+            dstOffset = IntOffset(imageBounds.left.roundToInt(), imageBounds.top.roundToInt()),
+            dstSize = IntSize(imageBounds.width.roundToInt(), imageBounds.height.roundToInt()),
+        )
+    }
+}
+
 /**
- * Turns drags into mask dabs. Touch points are converted against [imageBounds] — where the photo
- * actually sits after letterboxing — rather than the composable's own size, so a stroke lands under
- * the finger instead of being offset by the empty margins.
+ * Draws a freehand loop and hands back the closed path.
+ *
+ * Points are converted against [imageBounds] — where the photo actually sits after letterboxing —
+ * rather than the composable's own size, so the outline lands under the finger instead of being
+ * offset by the empty margins.
  */
+@Composable
+private fun LassoSurface(
+    imageBounds: Rect,
+    onCommit: (List<MaskPoint>) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var path by remember { mutableStateOf(emptyList<Offset>()) }
+
+    Box(
+        modifier = modifier.pointerInput(imageBounds) {
+            if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@pointerInput
+            // Sampling every touch event would put hundreds of near-identical points in the path
+            // for no extra accuracy; a couple of dp between them is plenty.
+            val minStep = 3.dp.toPx()
+            detectDragGestures(
+                onDragStart = { position -> path = listOf(position) },
+                onDragEnd = {
+                    val drawn = path
+                    path = emptyList()
+                    onCommit(
+                        drawn.map { point ->
+                            MaskPoint(
+                                x = (point.x - imageBounds.left) / imageBounds.width,
+                                y = (point.y - imageBounds.top) / imageBounds.height,
+                            )
+                        },
+                    )
+                },
+                onDragCancel = { path = emptyList() },
+            ) { change, _ ->
+                change.consume()
+                val last = path.lastOrNull()
+                if (last == null || (change.position - last).getDistance() >= minStep) {
+                    path = path + change.position
+                }
+            }
+        },
+    ) {
+        val drawn = path
+        if (drawn.size >= 2) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val outline = Path().apply {
+                    moveTo(drawn.first().x, drawn.first().y)
+                    drawn.drop(1).forEach { lineTo(it.x, it.y) }
+                }
+                drawPath(
+                    path = outline,
+                    color = Brand,
+                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
+                )
+                // The dashed run back to the start shows how the loop will close on release.
+                drawLine(
+                    color = Color.White,
+                    start = drawn.last(),
+                    end = drawn.first(),
+                    strokeWidth = 1.dp.toPx(),
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
+                )
+            }
+        }
+    }
+}
+
+/** Turns drags into mask dabs, in the same normalized space the lasso uses. */
 @Composable
 private fun MaskPaintSurface(
     imageBounds: Rect,
@@ -345,7 +442,213 @@ private fun fittedBounds(
     return Rect(left, top, left + drawnWidth, top + drawnHeight)
 }
 
-/** Switches the bottom controls between the geometry tools and the tonal ones. */
+// ---- Effects controls ---------------------------------------------------------------------------
+
+/**
+ * Everything an effect needs, as a few short rows under the photo: what's in the stack, which
+ * property the slider is on, that slider, and the actions.
+ *
+ * The predecessor put all of this in a dialog, which meant the photo was behind a scrim exactly
+ * when the slider was moving.
+ */
+@Composable
+private fun EffectsControls(
+    state: PerfectEditUiState,
+    viewModel: PerfectEditorViewModel,
+    addingEffect: Boolean,
+    onAddingEffect: (Boolean) -> Unit,
+) {
+    if (addingEffect) {
+        EffectPickerRow(
+            onPick = { kind ->
+                onAddingEffect(false)
+                viewModel.onAddEffect(kind)
+            },
+            onCancel = { onAddingEffect(false) },
+        )
+        return
+    }
+
+    LayerRow(
+        state = state,
+        onAdd = { onAddingEffect(true) },
+        onSelectLayer = viewModel::onSelectLayer,
+        onToggleVisible = viewModel::onToggleLayerVisibility,
+    )
+
+    val layer = state.document.selected
+    if (layer == null) {
+        SelectionChips(state = state, viewModel = viewModel, layer = null)
+        if (state.selectionTool == SelectionTool.Brush) {
+            ValueSlider(
+                value = state.brushRadius,
+                range = 0.02f..0.5f,
+                readout = "${(state.brushRadius * 100).roundToInt()}",
+                onChange = viewModel::onBrushRadius,
+            )
+        }
+        Text(
+            text = if (state.pendingSelection == null) {
+                "Draw around an area, then add an effect to apply it only there."
+            } else {
+                "Area ready — add an effect and it applies only there."
+            },
+            color = Color(0xAAFFFFFF),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 20.dp),
+        )
+        return
+    }
+
+    val controls = LayerControl.forLayer(layer, state.selectionTool)
+    val control = if (state.control in controls) state.control else controls.first()
+
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(controls, key = { it.name }) { candidate ->
+            PanelChip(label = candidate.label, isSelected = candidate == control) {
+                viewModel.onSelectControl(candidate)
+            }
+        }
+    }
+
+    ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
+    SelectionChips(state = state, viewModel = viewModel, layer = layer)
+}
+
+/** The single slider, showing whichever property the chips selected. */
+@Composable
+private fun ControlSlider(
+    layer: Layer,
+    control: LayerControl,
+    state: PerfectEditUiState,
+    viewModel: PerfectEditorViewModel,
+) {
+    val band = control.band
+    when {
+        band != null && layer is Layer.Tone -> {
+            val value = layer.adjustments.valueOf(band)
+            ValueSlider(
+                value = value.toFloat(),
+                range = -100f..100f,
+                readout = "$value",
+                onChange = { viewModel.onLayerToneChanged(layer.id, band, it.roundToInt()) },
+                onChangeFinished = viewModel::commitLayerEdit,
+            )
+        }
+
+        control == LayerControl.Blur && layer is Layer.Blur -> ValueSlider(
+            value = layer.radius.toFloat(),
+            range = 1f..60f,
+            readout = "${layer.radius}",
+            onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.BrushSize -> ValueSlider(
+            value = state.brushRadius,
+            range = 0.02f..0.5f,
+            readout = "${(state.brushRadius * 100).roundToInt()}",
+            onChange = viewModel::onBrushRadius,
+        )
+
+        else -> ValueSlider(
+            value = layer.opacity,
+            range = 0f..1f,
+            readout = "${(layer.opacity * 100).roundToInt()}%",
+            onChange = { viewModel.onLayerOpacity(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+    }
+}
+
+/**
+ * How an area is chosen, and what to do with the layer. Blend cycles through its modes on tap
+ * rather than opening a menu — a menu would need somewhere to appear, and that somewhere is the
+ * photo.
+ */
+@Composable
+private fun SelectionChips(
+    state: PerfectEditUiState,
+    viewModel: PerfectEditorViewModel,
+    layer: Layer?,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(SelectionTool.entries.toList(), key = { it.name }) { tool ->
+            PanelChip(label = tool.label, isSelected = tool == state.selectionTool) {
+                viewModel.onSelectionTool(tool)
+            }
+        }
+        item {
+            PanelChip(
+                label = state.selectionMode.label,
+                isSelected = state.selectionMode != SelectionMode.Replace,
+                onClick = viewModel::onCycleSelectionMode,
+            )
+        }
+        if (layer != null) {
+            item { PanelChip(label = layer.blend.label) { viewModel.onCycleBlend(layer.id) } }
+            item { PanelChip(label = "Up") { viewModel.onMoveLayer(layer.id, up = true) } }
+            item { PanelChip(label = "Down") { viewModel.onMoveLayer(layer.id, up = false) } }
+            item { PanelChip(label = "Delete") { viewModel.onRemoveLayer(layer.id) } }
+        }
+    }
+}
+
+/** The stack itself: add on the left, then a chip per layer, newest on top first. */
+@Composable
+private fun LayerRow(
+    state: PerfectEditUiState,
+    onAdd: () -> Unit,
+    onSelectLayer: (Long) -> Unit,
+    onToggleVisible: (Long) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        IconButton(onClick = onAdd, modifier = Modifier.size(40.dp)) {
+            Icon(Icons.Filled.AutoAwesome, contentDescription = "Add an effect", tint = Brand)
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.document.topDown, key = { it.id }) { layer ->
+                LayerChip(
+                    layer = layer,
+                    isSelected = layer.id == state.document.selectedId,
+                    onSelect = { onSelectLayer(layer.id) },
+                    onToggleVisible = { onToggleVisible(layer.id) },
+                )
+            }
+        }
+    }
+}
+
+/** Choosing what to add, inline — the photo stays visible even while the list is open. */
+@Composable
+private fun EffectPickerRow(onPick: (EffectKind) -> Unit, onCancel: () -> Unit) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(EffectKind.entries.toList(), key = { it.name }) { kind ->
+            PanelChip(label = kind.label, isSelected = true) { onPick(kind) }
+        }
+        item { PanelChip(label = "Cancel", onClick = onCancel) }
+    }
+}
+
+// ---- Shared pieces ------------------------------------------------------------------------------
+
+/** Switches the bottom controls between geometry and effects. */
 @Composable
 private fun ToolSwitch(selected: PerfectTool, onSelect: (PerfectTool) -> Unit) {
     Row(
@@ -372,245 +675,40 @@ private fun ToolSwitch(selected: PerfectTool, onSelect: (PerfectTool) -> Unit) {
 }
 
 /**
- * Blacks / shadows / highlights / whites: chips to choose a band, one slider for it. Matches how
- * the camera and light editor present adjustments, and keeps the photo visible.
+ * One slider with a readout. [onChangeFinished] is what turns a whole drag into a single undo
+ * step, rather than one per pixel of travel.
  */
 @Composable
-private fun TonePanel(
-    tone: ToneAdjustments,
-    band: ToneBand,
-    onSelectBand: (ToneBand) -> Unit,
-    onChange: (Int) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0x59000000))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            ToneBand.entries.forEach { candidate ->
-                val isSelected = candidate == band
-                Text(
-                    text = candidate.label,
-                    color = if (isSelected) Color.White else Color(0xCCFFFFFF),
-                    fontSize = 11.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (isSelected) Brand else Color(0x22FFFFFF))
-                        .clickable { onSelectBand(candidate) }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
-        }
-        val value = tone.valueOf(band)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Slider(
-                value = value.toFloat(),
-                onValueChange = { onChange(it.roundToInt()) },
-                valueRange = -100f..100f,
-                colors = SliderDefaults.colors(
-                    thumbColor = Brand,
-                    activeTrackColor = Brand,
-                    inactiveTrackColor = Color(0x55FFFFFF),
-                ),
-                modifier = Modifier.weight(1f).height(26.dp),
-            )
-            Text(
-                text = "$value",
-                color = Brand,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 10.dp),
-            )
-        }
-    }
-}
-
-/**
- * The whole effects UI when nothing is selected: one button to add an effect, and chips for what's
- * already there. Everything else opens on demand — the previous version stacked five rows of
- * controls permanently, which ate the photo and buried the ones that mattered.
- */
-@Composable
-private fun EffectsBar(
-    state: PerfectEditUiState,
-    onAddEffect: () -> Unit,
-    onSelectLayer: (Long) -> Unit,
-    onOpenSettings: () -> Unit,
-    onToggleVisible: (Long) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        IconButton(onClick = onAddEffect, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Filled.AutoAwesome, contentDescription = "Add an effect", tint = Brand)
-        }
-        if (state.document.isEmpty) {
-            Text(
-                text = "Add an effect, then paint to choose where it applies.",
-                color = Color(0xAAFFFFFF),
-                fontSize = 12.sp,
-            )
-        } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.document.topDown, key = { it.id }) { layer ->
-                    LayerChip(
-                        layer = layer,
-                        isSelected = layer.id == state.document.selectedId,
-                        // Tapping the already-selected layer opens its settings, so its controls
-                        // are always one tap away without living on screen.
-                        onSelect = {
-                            if (layer.id == state.document.selectedId) onOpenSettings() else onSelectLayer(layer.id)
-                        },
-                        onToggleVisible = { onToggleVisible(layer.id) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EffectPickerDialog(onPick: (EffectKind) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add an effect") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                EffectKind.entries.forEach { kind ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { onPick(kind) }
-                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                    ) {
-                        Text(kind.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Brand)
-                        Text(kind.description, fontSize = 13.sp)
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
-/**
- * Everything about one layer, opened from its chip. Crucially this includes the control that makes
- * the layer *do* something — a tone layer's bands or a blur's radius. Their absence is what made
- * layers look broken, and what made the mask brush look broken along with them.
- */
-@Composable
-private fun LayerSettingsDialog(
-    layer: Layer,
-    state: PerfectEditUiState,
-    viewModel: PerfectEditorViewModel,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(layer.name) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                when (layer) {
-                    is Layer.Tone -> TonePanel(
-                        tone = layer.adjustments,
-                        band = state.band,
-                        onSelectBand = viewModel::onSelectLayerBand,
-                        onChange = { value -> viewModel.onLayerToneChanged(layer.id, state.band, value) },
-                    )
-
-                    is Layer.Blur -> LabelledSlider(
-                        label = "Blur",
-                        value = layer.radius.toFloat(),
-                        range = 1f..60f,
-                        readout = "${layer.radius}",
-                        onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
-                    )
-
-                    is Layer.Look -> Unit
-                }
-
-                LabelledSlider(
-                    label = "Opacity",
-                    value = layer.opacity,
-                    range = 0f..1f,
-                    readout = "${(layer.opacity * 100).roundToInt()}%",
-                    onChange = { viewModel.onLayerOpacity(layer.id, it) },
-                )
-                LabelledSlider(
-                    label = "Brush",
-                    value = state.brushRadius,
-                    range = 0.02f..0.5f,
-                    readout = if (state.brushErases) "Erase" else "Paint",
-                    onChange = viewModel::onBrushRadius,
-                )
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PanelChip(
-                        label = if (state.brushErases) "Erasing" else "Painting",
-                        isSelected = state.brushErases,
-                        onClick = viewModel::onToggleBrushErase,
-                    )
-                    PanelChip("Move up") { viewModel.onMoveLayer(layer.id, up = true) }
-                    PanelChip("Move down") { viewModel.onMoveLayer(layer.id, up = false) }
-                }
-
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(BlendMode.entries.toList(), key = { it.name }) { mode ->
-                        PanelChip(label = mode.label, isSelected = mode == layer.blend) {
-                            viewModel.onLayerBlend(layer.id, mode)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { viewModel.commitLayerEdit(); onDismiss() }) { Text("Done") }
-        },
-        dismissButton = {
-            TextButton(onClick = { viewModel.onRemoveLayer(layer.id); onDismiss() }) {
-                Text("Delete", color = Brand)
-            }
-        },
-    )
-}
-
-@Composable
-private fun LabelledSlider(
-    label: String,
+private fun ValueSlider(
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     readout: String,
     onChange: (Float) -> Unit,
+    onChangeFinished: (() -> Unit)? = null,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = label, fontSize = 12.sp, modifier = Modifier.width(58.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Slider(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onChange,
+            onValueChangeFinished = onChangeFinished,
             valueRange = range,
             colors = SliderDefaults.colors(
                 thumbColor = Brand,
                 activeTrackColor = Brand,
-                inactiveTrackColor = Color(0x55888888),
+                inactiveTrackColor = Color(0x55FFFFFF),
             ),
-            modifier = Modifier.weight(1f).height(32.dp),
+            modifier = Modifier.weight(1f).height(28.dp),
         )
         Text(
             text = readout,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             color = Brand,
-            modifier = Modifier.padding(start = 8.dp).width(48.dp),
+            modifier = Modifier.padding(start = 10.dp).width(44.dp),
+            textAlign = TextAlign.End,
         )
     }
 }
@@ -663,40 +761,34 @@ private fun PanelChip(label: String, isSelected: Boolean = false, onClick: () ->
             .clip(RoundedCornerShape(10.dp))
             .background(if (isSelected) Brand else Color(0x22FFFFFF))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
 
 @Composable
 private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0x59000000))
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = "Straighten", color = Color(0xCCFFFFFF), fontSize = 12.sp)
-            Slider(
-                value = degrees,
-                onValueChange = onChange,
-                valueRange = -CropMath.MAX_STRAIGHTEN_DEGREES..CropMath.MAX_STRAIGHTEN_DEGREES,
-                colors = SliderDefaults.colors(
-                    thumbColor = Brand,
-                    activeTrackColor = Brand,
-                    inactiveTrackColor = Color(0x55FFFFFF),
-                ),
-                modifier = Modifier.weight(1f).height(26.dp).padding(horizontal = 10.dp),
-            )
-            Text(
-                text = "${degrees.roundToInt()}°",
-                color = Brand,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
+        Text(text = "Straighten", color = Color(0xCCFFFFFF), fontSize = 12.sp)
+        Slider(
+            value = degrees,
+            onValueChange = onChange,
+            valueRange = -CropMath.MAX_STRAIGHTEN_DEGREES..CropMath.MAX_STRAIGHTEN_DEGREES,
+            colors = SliderDefaults.colors(
+                thumbColor = Brand,
+                activeTrackColor = Brand,
+                inactiveTrackColor = Color(0x55FFFFFF),
+            ),
+            modifier = Modifier.weight(1f).height(28.dp).padding(horizontal = 10.dp),
+        )
+        Text(
+            text = "${degrees.roundToInt()}°",
+            color = Brand,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -721,7 +813,7 @@ private fun ToolButton(
 private fun AspectRow(selected: AspectRatio, onSelect: (AspectRatio) -> Unit) {
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(AspectRatio.entries.toList(), key = { it.name }) { aspect ->

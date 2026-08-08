@@ -11,7 +11,6 @@ import com.pictureperfectx.app.capture.BitmapIO
 import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.capture.ImageGeometry
-import com.pictureperfectx.app.capture.ImageToner
 import com.pictureperfectx.app.capture.ImageTransformer
 import com.pictureperfectx.app.capture.PhotoSaver
 import com.pictureperfectx.app.capture.ToneAdjustments
@@ -24,6 +23,9 @@ import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.LayerRenderer
 import com.pictureperfectx.app.layers.Mask
 import com.pictureperfectx.app.layers.MaskBrush
+import com.pictureperfectx.app.layers.MaskLasso
+import com.pictureperfectx.app.layers.MaskPoint
+import com.pictureperfectx.app.layers.SelectionMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -45,19 +47,66 @@ enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
 }
 
+/** How an area is chosen: drawn round in one go, or painted in by hand. */
+enum class SelectionTool(val label: String) { Lasso("Lasso"), Brush("Brush") }
+
+/**
+ * The one property the effects panel's single slider is editing, picked from a row of chips.
+ *
+ * One slider at a time is what keeps the controls to a couple of short rows — and the controls
+ * short is what keeps them from eating the photo they're meant to be adjusting.
+ */
+enum class LayerControl(val label: String) {
+    Blacks("Blacks"),
+    Shadows("Shadows"),
+    Highlights("Highlights"),
+    Whites("Whites"),
+    Blur("Blur"),
+    Opacity("Opacity"),
+    BrushSize("Brush size");
+
+    /** The tonal band this control edits, for the four that are one. */
+    val band: ToneBand?
+        get() = when (this) {
+            Blacks -> ToneBand.Blacks
+            Shadows -> ToneBand.Shadows
+            Highlights -> ToneBand.Highlights
+            Whites -> ToneBand.Whites
+            else -> null
+        }
+
+    companion object {
+        /** What [layer] offers, plus brush size when the brush is what's in hand. */
+        fun forLayer(layer: Layer, tool: SelectionTool): List<LayerControl> = buildList {
+            when (layer) {
+                is Layer.Tone -> { add(Blacks); add(Shadows); add(Highlights); add(Whites) }
+                is Layer.Blur -> add(Blur)
+                is Layer.Look -> Unit
+            }
+            add(Opacity)
+            if (tool == SelectionTool.Brush) add(BrushSize)
+        }
+    }
+}
+
 data class PerfectEditUiState(
     val geometry: ImageGeometry = ImageGeometry(),
-    val tone: ToneAdjustments = ToneAdjustments(),
     val tool: PerfectTool = PerfectTool.Crop,
-    val band: ToneBand = ToneBand.Blacks,
-    /** Geometry + tone + the layer stack applied — what's displayed. */
+    /** Geometry plus the layer stack applied — what's displayed. */
     val canvas: Bitmap? = null,
     val document: Document = Document(),
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
+    val control: LayerControl = LayerControl.Shadows,
+    val selectionTool: SelectionTool = SelectionTool.Lasso,
+    val selectionMode: SelectionMode = SelectionMode.Replace,
+    /**
+     * An area drawn before any effect was chosen. The next effect added takes it as its mask, which
+     * is the draw-then-adjust order selections are normally used in.
+     */
+    val pendingSelection: Mask? = null,
     /** Brush radius as a fraction of the image's shorter edge. */
     val brushRadius: Float = 0.12f,
-    val brushErases: Boolean = false,
     val isSaving: Boolean = false,
     val ready: Boolean = false,
     val notice: String? = null,
@@ -67,13 +116,21 @@ data class PerfectEditUiState(
     val canvasRatio: Float
         get() = canvas?.let { if (it.height > 0) it.width.toFloat() / it.height else 1f } ?: 1f
 
-    /** Painting only makes sense on a chosen layer, while the effects tool is showing. */
-    val canPaintMask: Boolean get() = tool == PerfectTool.Effects && document.selected != null
+    /**
+     * Areas can be drawn whenever effects are showing, with or without a layer selected — drawing
+     * first and choosing the effect after is the whole point of a pending selection.
+     */
+    val canSelect: Boolean get() = tool == PerfectTool.Effects
+
+    /** The area currently being edited: the selected layer's, or the one drawn ahead of a layer. */
+    val activeMask: Mask?
+        get() = document.selected?.mask?.takeUnless { it.isEmpty } ?: pendingSelection
 }
 
 /**
- * Backs the Perfect Editor's geometry tools. The edit is held as a declarative [ImageGeometry] and
- * only ever rendered — the source bitmap is never mutated, and saving writes a brand-new photo.
+ * Backs the Perfect Editor. The edit is held as a declarative [ImageGeometry] plus a layer
+ * [Document] and only ever rendered — the source bitmap is never mutated, and saving writes a
+ * brand-new photo.
  */
 class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -82,10 +139,10 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     private var sourceFull: Bitmap? = null
     private var sourcePreview: Bitmap? = null
 
-    // Geometry applied but not tone or layers, so a slider drag re-renders colour without redoing
+    // Geometry applied but not the layer stack, so a slider drag re-renders colour without redoing
     // the rotate/crop work each frame.
     private var orientedPreview: Bitmap? = null
-    private var toneJob: Job? = null
+    private var renderJob: Job? = null
 
     // Undo holds whole documents; a Document stores descriptions rather than pixels, so snapshots
     // are cheap enough for that to be the simplest correct approach.
@@ -172,35 +229,32 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onReset() {
         history = History()
         _state.update {
-            it.copy(tone = ToneAdjustments(), document = Document(), canUndo = false, canRedo = false)
+            it.copy(
+                document = Document(),
+                pendingSelection = null,
+                canUndo = false,
+                canRedo = false,
+            )
         }
         applyGeometry(ImageGeometry())
     }
 
-    // ---- Tone -----------------------------------------------------------------------------------
-
     fun onSelectTool(tool: PerfectTool) = _state.update { it.copy(tool = tool) }
 
-    fun onSelectBand(band: ToneBand) = _state.update { it.copy(band = band) }
-
-    fun onToneChanged(band: ToneBand, value: Int) {
-        _state.update { it.copy(tone = it.tone.with(band, value.coerceIn(-100, 100))) }
-        schedulePreview()
-    }
+    // ---- Rendering ------------------------------------------------------------------------------
 
     /**
-     * Re-renders tone and the layer stack from the already-oriented preview. Debounced, so dragging
-     * a slider or painting a stroke doesn't queue a GPU pass per pixel of travel.
+     * Re-renders the layer stack from the already-oriented preview. Debounced, so dragging a slider
+     * or painting a stroke doesn't queue a GPU pass per pixel of travel.
      */
     private fun schedulePreview() {
         val source = orientedPreview ?: return
-        toneJob?.cancel()
-        toneJob = viewModelScope.launch {
+        renderJob?.cancel()
+        renderJob = viewModelScope.launch {
             delay(60)
-            val tone = _state.value.tone
             val document = _state.value.document
             val rendered = withContext(Dispatchers.Default) {
-                runCatching { composite(source, tone, document) }
+                runCatching { LayerRenderer.render(getApplication(), source, document) }
             }
             rendered.onSuccess { canvas -> _state.update { it.copy(canvas = canvas) } }
             // Swallowing this left the previous canvas on screen, so a failed GPU pass and a layer
@@ -212,10 +266,6 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-
-    /** Tone first, then the stack on top — the same order the export uses. */
-    private fun composite(source: Bitmap, tone: ToneAdjustments, document: Document): Bitmap =
-        LayerRenderer.render(getApplication(), ImageToner.apply(getApplication(), source, tone), document)
 
     /** Crop-only changes don't touch the canvas, so they never need a re-render. */
     private fun updateGeometry(transform: (ImageGeometry) -> ImageGeometry) {
@@ -232,7 +282,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             } ?: return@launch
             orientedPreview = oriented
             val canvas = withContext(Dispatchers.Default) {
-                runCatching { composite(oriented, _state.value.tone, _state.value.document) }
+                runCatching { LayerRenderer.render(getApplication(), oriented, _state.value.document) }
                     .getOrDefault(oriented)
             }
             _state.update { current ->
@@ -259,14 +309,13 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(isSaving = true) }
         viewModelScope.launch {
             val geometry = _state.value.geometry
-            val tone = _state.value.tone
             val document = _state.value.document
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    // Geometry, then tone, then the stack — the same order the preview composites in,
-                    // which is what keeps the saved photo matching what was on screen.
+                    // Geometry, then the stack — the same order the preview composites in, which is
+                    // what keeps the saved photo matching what was on screen.
                     val cropped = ImageTransformer.apply(source, geometry)
-                    val out = composite(cropped, tone, document)
+                    val out = LayerRenderer.render(getApplication(), cropped, document)
                     if (out !== cropped && cropped !== source && !cropped.isRecycled) cropped.recycle()
                     val saved = PhotoSaver.save(getApplication(), out)
                     repository.record(
@@ -300,21 +349,32 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Layers ---------------------------------------------------------------------------------
 
     /**
-     * Adds an effect and selects it. The caller opens its settings straight away — a layer whose
-     * controls aren't immediately reachable is a layer that looks broken, which is exactly what
-     * happened before.
+     * Adds an effect and selects it, taking over any area drawn beforehand — lasso the sky, add
+     * Tone, and only the sky changes.
      */
     fun onAddEffect(kind: EffectKind) {
+        val state = _state.value
+        // No pending selection means no mask, which renders as "applies to the whole photo".
+        val mask = state.pendingSelection ?: Mask()
         val document = when (kind) {
             // Not neutral: a fresh layer must visibly do something, or adding it looks like a no-op.
-            EffectKind.Tone -> _state.value.document.add {
-                Layer.Tone(it, adjustments = ToneAdjustments(shadows = 25))
+            EffectKind.Tone -> state.document.add {
+                Layer.Tone(it, adjustments = ToneAdjustments(shadows = 25), mask = mask)
             }
         }
+        _state.update { it.copy(pendingSelection = null, control = LayerControl.Shadows) }
         commit(document)
     }
 
-    fun onSelectLayer(id: Long) = applyDocument(_state.value.document.select(id), record = false)
+    /** Tapping the selected layer deselects it, which is how you get back to drawing a fresh area. */
+    fun onSelectLayer(id: Long) {
+        val document = _state.value.document
+        val next = if (document.selectedId == id) document.select(null) else document.select(id)
+        // A pending area belongs to "nothing selected yet"; carrying it past a selection would make
+        // it reappear on some later effect out of nowhere.
+        _state.update { it.copy(pendingSelection = null) }
+        applyDocument(next, record = false)
+    }
 
     fun onToggleLayerVisibility(id: Long) = commit(_state.value.document.toggleVisibility(id))
 
@@ -325,15 +385,21 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onLayerOpacity(id: Long, opacity: Float) =
         applyDocument(_state.value.document.setOpacity(id, opacity), record = false)
 
-    fun onLayerBlend(id: Long, blend: BlendMode) = commit(_state.value.document.setBlend(id, blend))
+    /** Cycles to the next blend mode, so the choice needs no menu to open over the photo. */
+    fun onCycleBlend(id: Long) {
+        val layer = _state.value.document.layers.firstOrNull { it.id == id } ?: return
+        val modes = BlendMode.entries
+        val next = modes[(modes.indexOf(layer.blend) + 1) % modes.size]
+        commit(_state.value.document.setBlend(id, next))
+    }
 
     /**
      * Edits what a layer actually *does*, as opposed to how it's composited.
      *
      * `withCommon` deliberately can't reach a layer's payload, so these go through
      * [Document.update] directly. Without them a Tone layer stays neutral for its whole life and
-     * quietly renders nothing — which also makes the mask brush look broken, since painting a
-     * mask onto a no-op layer changes nothing on screen.
+     * quietly renders nothing — which also makes the mask tools look broken, since masking a no-op
+     * layer changes nothing on screen.
      */
     fun onLayerToneChanged(id: Long, band: ToneBand, value: Int) {
         val document = _state.value.document.update(id) { layer ->
@@ -353,34 +419,95 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applyDocument(document, record = false)
     }
 
-    /** Which tonal band a selected Tone layer's single slider is editing. */
-    fun onSelectLayerBand(band: ToneBand) = _state.update { it.copy(band = band) }
+    /** Which single property the panel's slider is editing. */
+    fun onSelectControl(control: LayerControl) = _state.update { it.copy(control = control) }
 
     /** Slider drags don't each deserve an undo step; the gesture ending pushes one. */
     fun commitLayerEdit() = commit(_state.value.document)
 
+    // ---- Selections -----------------------------------------------------------------------------
+
+    fun onSelectionTool(tool: SelectionTool) = _state.update { it.copy(selectionTool = tool) }
+
+    fun onCycleSelectionMode() = _state.update {
+        val modes = SelectionMode.entries
+        it.copy(selectionMode = modes[(modes.indexOf(it.selectionMode) + 1) % modes.size])
+    }
+
     fun onBrushRadius(radius: Float) = _state.update { it.copy(brushRadius = radius.coerceIn(0.02f, 0.5f)) }
 
-    fun onToggleBrushErase() = _state.update { it.copy(brushErases = !it.brushErases) }
+    /** A finished lasso, as normalized points. One drawn shape is one undo step. */
+    fun onLassoCommitted(path: List<MaskPoint>) {
+        if (path.size < 3) return
+        val state = _state.value
+        val layer = state.document.selected
+        val filled = MaskLasso.fill(
+            mask = selectionBase(state, layer, state.selectionMode),
+            path = path,
+            mode = state.selectionMode,
+        )
+        applySelection(state, layer, filled, record = true)
+    }
 
     /**
-     * A dab at normalized ([x], [y]). Strokes aren't recorded step by step — that would bury the
-     * history under hundreds of entries — so [endStroke] pushes the finished stroke instead.
+     * A brush dab at normalized ([x], [y]). Strokes aren't recorded step by step — that would bury
+     * the history under hundreds of entries — so [endStroke] pushes the finished stroke instead.
      */
     fun onPaintMask(x: Float, y: Float) {
         val state = _state.value
-        val layer = state.document.selected ?: return
+        val layer = state.document.selected
+        // The brush only ever adds or removes; "New" is a lasso idea, so it paints.
+        val mode = if (state.selectionMode == SelectionMode.Subtract) {
+            SelectionMode.Subtract
+        } else {
+            SelectionMode.Add
+        }
         val painted = MaskBrush.paint(
-            mask = if (layer.mask.isEmpty) Mask.blank() else layer.mask,
+            mask = selectionBase(state, layer, mode),
             x = x,
             y = y,
             radius = state.brushRadius,
-            erase = state.brushErases,
+            erase = mode == SelectionMode.Subtract,
         )
-        applyDocument(state.document.setMask(layer.id, painted), record = false)
+        applySelection(state, layer, painted, record = false)
     }
 
     fun endStroke() = commit(_state.value.document)
+
+    /**
+     * The mask a selection edit starts from.
+     *
+     * The case worth spelling out is an unmasked layer. An empty mask renders as "covers
+     * everything", so subtracting from one has to start at full coverage and cut a hole — starting
+     * from nothing would silently wipe the effect out instead of trimming it.
+     */
+    private fun selectionBase(state: PerfectEditUiState, layer: Layer?, mode: SelectionMode): Mask {
+        val current = if (layer != null) layer.mask.takeUnless { it.isEmpty } else state.pendingSelection
+        return when {
+            mode == SelectionMode.Replace -> Mask.forRatio(state.canvasRatio)
+            current != null -> current
+            mode == SelectionMode.Subtract && layer != null ->
+                Mask.forRatio(state.canvasRatio, covered = true)
+            else -> Mask.forRatio(state.canvasRatio)
+        }
+    }
+
+    /** Writes an edited area to the selected layer, or holds it for the next effect added. */
+    private fun applySelection(
+        state: PerfectEditUiState,
+        layer: Layer?,
+        mask: Mask,
+        record: Boolean,
+    ) {
+        if (layer == null) {
+            _state.update { it.copy(pendingSelection = mask) }
+            return
+        }
+        val document = state.document.setMask(layer.id, mask)
+        if (record) commit(document) else applyDocument(document, record = false)
+    }
+
+    // ---- History --------------------------------------------------------------------------------
 
     fun onUndo() {
         history = history.undo()
@@ -411,7 +538,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
-        toneJob?.cancel()
+        renderJob?.cancel()
         super.onCleared()
     }
 

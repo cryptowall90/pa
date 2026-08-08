@@ -1,6 +1,7 @@
 package com.pictureperfectx.app.layers
 
 import com.pictureperfectx.app.capture.ToneAdjustments
+import kotlin.math.roundToInt
 
 /**
  * How a layer's pixels combine with everything beneath it. The set is deliberately limited to modes
@@ -104,6 +105,16 @@ data class Mask(
 
     companion object {
         const val DEFAULT_RESOLUTION = 64
+
+        /**
+         * Selections get a finer grid than the brush. 64 cells is plenty for a soft dab and far too
+         * coarse for a drawn outline, where the staircase would be the first thing you notice.
+         */
+        const val SELECTION_RESOLUTION = 192
+
+        /** A drawn edge should read as deliberate, so selections feather less than a brushed mask. */
+        const val SELECTION_FEATHER = 0.12f
+
         private const val MAX_FEATHER_RADIUS = 6
         private const val PASSES = 2
 
@@ -113,6 +124,30 @@ data class Mask(
         /** An empty coverage grid, ready to be painted into. */
         fun blank(columns: Int = DEFAULT_RESOLUTION, rows: Int = DEFAULT_RESOLUTION): Mask =
             Mask(columns, rows, FloatArray(columns * rows))
+
+        /**
+         * A blank selection grid whose cells are square on an image of the given width/height
+         * [ratio]. A square grid over a 4:3 photo would resolve one axis more finely than the
+         * other, which shows up as a lasso edge that's crisper vertically than horizontally.
+         */
+        fun forRatio(
+            ratio: Float,
+            resolution: Int = SELECTION_RESOLUTION,
+            /** Start fully covered, for trimming an effect that currently applies everywhere. */
+            covered: Boolean = false,
+        ): Mask {
+            val safe = if (ratio.isFinite() && ratio > 0f) ratio else 1f
+            val longest = resolution.coerceAtLeast(1)
+            val columns = if (safe >= 1f) longest else (longest * safe).roundToInt().coerceAtLeast(1)
+            val rows = if (safe >= 1f) (longest / safe).roundToInt().coerceAtLeast(1) else longest
+            val fill = if (covered) 1f else 0f
+            return Mask(
+                columns = columns,
+                rows = rows,
+                coverage = FloatArray(columns * rows) { fill },
+                feather = SELECTION_FEATHER,
+            )
+        }
     }
 }
 
