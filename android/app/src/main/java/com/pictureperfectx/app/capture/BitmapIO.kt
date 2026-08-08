@@ -54,7 +54,8 @@ object BitmapIO {
         return applyExifOrientation(decoded, orientation)
     }
 
-    private fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
+    /** Applies one of the 8 EXIF/TIFF orientations, returning [bitmap] unchanged when upright. */
+    internal fun applyExifOrientation(bitmap: Bitmap, orientation: Int): Bitmap {
         val m = Matrix()
         when (orientation) {
             ExifInterface.ORIENTATION_ROTATE_90 -> m.postRotate(90f)
