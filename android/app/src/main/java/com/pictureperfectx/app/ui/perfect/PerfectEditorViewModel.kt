@@ -11,10 +11,15 @@ import com.pictureperfectx.app.capture.BitmapIO
 import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.capture.ImageGeometry
+import com.pictureperfectx.app.capture.ImageToner
 import com.pictureperfectx.app.capture.ImageTransformer
 import com.pictureperfectx.app.capture.PhotoSaver
+import com.pictureperfectx.app.capture.ToneAdjustments
+import com.pictureperfectx.app.capture.ToneBand
 import com.pictureperfectx.app.data.PhotoEntity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,9 +27,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Which set of controls the editor is showing. */
+enum class PerfectTool(val label: String) { Crop("Crop"), Tone("Tone") }
+
 data class PerfectEditUiState(
     val geometry: ImageGeometry = ImageGeometry(),
-    /** The source with flips/turns/straighten applied — what the crop overlay is drawn over. */
+    val tone: ToneAdjustments = ToneAdjustments(),
+    val tool: PerfectTool = PerfectTool.Crop,
+    val band: ToneBand = ToneBand.Blacks,
+    /** Geometry + tone applied — what's displayed, and what the crop overlay is drawn over. */
     val canvas: Bitmap? = null,
     val isSaving: Boolean = false,
     val ready: Boolean = false,
@@ -47,6 +58,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     private var sourceFull: Bitmap? = null
     private var sourcePreview: Bitmap? = null
 
+    // Geometry applied but not tone, so a slider drag re-renders colour without redoing the
+    // rotate/crop work each frame.
+    private var orientedPreview: Bitmap? = null
+    private var toneJob: Job? = null
+
     private val _state = MutableStateFlow(PerfectEditUiState())
     val state: StateFlow<PerfectEditUiState> = _state.asStateFlow()
 
@@ -59,6 +75,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             val preview = full?.let { scaleToMaxEdge(it, PREVIEW_MAX_EDGE) }
             sourceFull = full
             sourcePreview = preview
+            orientedPreview = preview
             // The ViewModel is Activity-scoped and reused, so every load starts from scratch.
             _state.update {
                 PerfectEditUiState(
@@ -121,7 +138,35 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applyGeometry(_state.value.geometry.copy(straightenDegrees = clamped))
     }
 
-    fun onReset() = applyGeometry(ImageGeometry())
+    fun onReset() {
+        _state.update { it.copy(tone = ToneAdjustments()) }
+        applyGeometry(ImageGeometry())
+    }
+
+    // ---- Tone -----------------------------------------------------------------------------------
+
+    fun onSelectTool(tool: PerfectTool) = _state.update { it.copy(tool = tool) }
+
+    fun onSelectBand(band: ToneBand) = _state.update { it.copy(band = band) }
+
+    fun onToneChanged(band: ToneBand, value: Int) {
+        _state.update { it.copy(tone = it.tone.with(band, value.coerceIn(-100, 100))) }
+        scheduleTone()
+    }
+
+    /** Debounced so dragging a slider doesn't queue a GPU pass per pixel of travel. */
+    private fun scheduleTone() {
+        val source = orientedPreview ?: return
+        toneJob?.cancel()
+        toneJob = viewModelScope.launch {
+            delay(60)
+            val tone = _state.value.tone
+            val rendered = withContext(Dispatchers.Default) {
+                runCatching { ImageToner.apply(getApplication(), source, tone) }.getOrNull()
+            } ?: return@launch
+            _state.update { it.copy(canvas = rendered) }
+        }
+    }
 
     /** Crop-only changes don't touch the canvas, so they never need a re-render. */
     private fun updateGeometry(transform: (ImageGeometry) -> ImageGeometry) {
@@ -133,9 +178,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         val source = sourcePreview ?: return
         _state.update { it.copy(geometry = geometry) }
         viewModelScope.launch {
-            val canvas = withContext(Dispatchers.Default) {
+            val oriented = withContext(Dispatchers.Default) {
                 runCatching { ImageTransformer.orient(source, geometry) }.getOrNull()
             } ?: return@launch
+            orientedPreview = oriented
+            val canvas = withContext(Dispatchers.Default) {
+                runCatching { ImageToner.apply(getApplication(), oriented, _state.value.tone) }
+                    .getOrDefault(oriented)
+            }
             _state.update { current ->
                 val ratio = if (canvas.height > 0) canvas.width.toFloat() / canvas.height else 1f
                 val ratioTarget = current.geometry.aspect.ratio(ratio)
@@ -160,9 +210,12 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(isSaving = true) }
         viewModelScope.launch {
             val geometry = _state.value.geometry
+            val tone = _state.value.tone
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    val out = ImageTransformer.apply(source, geometry)
+                    val cropped = ImageTransformer.apply(source, geometry)
+                    val out = ImageToner.apply(getApplication(), cropped, tone)
+                    if (out !== cropped && cropped !== source && !cropped.isRecycled) cropped.recycle()
                     val saved = PhotoSaver.save(getApplication(), out)
                     repository.record(
                         PhotoEntity(
@@ -191,6 +244,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun consumeMessage() = _state.update { it.copy(savedMessage = null) }
 
     fun consumeNotice() = _state.update { it.copy(notice = null) }
+
+    override fun onCleared() {
+        toneJob?.cancel()
+        super.onCleared()
+    }
 
     private fun scaleToMaxEdge(source: Bitmap, maxEdge: Int): Bitmap {
         val longest = maxOf(source.width, source.height)

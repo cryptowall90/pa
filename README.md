@@ -125,6 +125,12 @@ geometry:
   corners resize proportionally and the frame can be dragged around.
 - **Straighten** (−45°…45°), **rotate** in quarter turns, and **flip** both ways. Straightening
   scales just enough to cover the frame, so a levelled photo never shows empty corners.
+- **Tone**: **blacks, shadows, highlights and whites**, each −100…100. A `Crop` / `Tone` switch
+  swaps the bottom controls, and the crop frame hides while judging tone. GPUImage's own
+  highlight/shadow filter only lightens shadows and only darkens highlights, so
+  `capture/GPUImageToneFilter.kt` is a custom one-pass shader that weights each adjustment by where
+  a pixel sits in the luminance range — overlapping bands, so the four controls blend rather than
+  band at their edges.
 - The edit is a declarative `ImageGeometry` (flips → turns → straighten → crop) with the crop held
   in **normalized 0..1 coordinates**, so the preview and the full-resolution export frame
   identically by construction. The maths lives in `capture/ImageGeometry.kt`, free of Android types

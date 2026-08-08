@@ -53,11 +53,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.capture.AspectRatio
 import com.pictureperfectx.app.capture.CropMath
+import com.pictureperfectx.app.capture.ToneAdjustments
+import com.pictureperfectx.app.capture.ToneBand
 import com.pictureperfectx.app.ui.components.CameraNotice
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -131,26 +134,37 @@ fun PerfectEditorScreen(
             ) {
                 state.notice?.let { CameraNotice(text = it, onDismiss = viewModel::consumeNotice) }
 
-                StraightenSlider(
-                    degrees = state.geometry.straightenDegrees,
-                    onChange = viewModel::onStraighten,
-                )
+                ToolSwitch(selected = state.tool, onSelect = viewModel::onSelectTool)
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    ToolButton(Icons.Filled.RotateLeft, "Rotate left") { viewModel.onRotate(false) }
-                    ToolButton(Icons.Filled.RotateRight, "Rotate right") { viewModel.onRotate(true) }
-                    ToolButton(Icons.Filled.Flip, "Flip horizontally") { viewModel.onFlip(true) }
-                    ToolButton(
-                        icon = Icons.Filled.Flip,
-                        description = "Flip vertically",
-                        rotate = 90f,
-                    ) { viewModel.onFlip(false) }
+                when (state.tool) {
+                    PerfectTool.Crop -> {
+                        StraightenSlider(
+                            degrees = state.geometry.straightenDegrees,
+                            onChange = viewModel::onStraighten,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            ToolButton(Icons.Filled.RotateLeft, "Rotate left") { viewModel.onRotate(false) }
+                            ToolButton(Icons.Filled.RotateRight, "Rotate right") { viewModel.onRotate(true) }
+                            ToolButton(Icons.Filled.Flip, "Flip horizontally") { viewModel.onFlip(true) }
+                            ToolButton(
+                                icon = Icons.Filled.Flip,
+                                description = "Flip vertically",
+                                rotate = 90f,
+                            ) { viewModel.onFlip(false) }
+                        }
+                        AspectRow(selected = state.geometry.aspect, onSelect = viewModel::onAspectSelected)
+                    }
+
+                    PerfectTool.Tone -> TonePanel(
+                        tone = state.tone,
+                        band = state.band,
+                        onSelectBand = viewModel::onSelectBand,
+                        onChange = { value -> viewModel.onToneChanged(state.band, value) },
+                    )
                 }
-
-                AspectRow(selected = state.geometry.aspect, onSelect = viewModel::onAspectSelected)
             }
         }
     }
@@ -193,14 +207,17 @@ private fun CropStage(
             )
         }
 
-        CropOverlay(
-            crop = state.geometry.crop,
-            imageBounds = bounds,
-            lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
-            sourceRatio = state.canvasRatio,
-            onCropChanged = onCropChanged,
-            modifier = Modifier.fillMaxSize(),
-        )
+        // The crop frame would only get in the way while judging tone, so it's crop-mode only.
+        if (state.tool == PerfectTool.Crop) {
+            CropOverlay(
+                crop = state.geometry.crop,
+                imageBounds = bounds,
+                lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
+                sourceRatio = state.canvasRatio,
+                onCropChanged = onCropChanged,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
@@ -223,6 +240,93 @@ private fun fittedBounds(
     val left = (containerWidth - drawnWidth) / 2f
     val top = (containerHeight - drawnHeight) / 2f
     return Rect(left, top, left + drawnWidth, top + drawnHeight)
+}
+
+/** Switches the bottom controls between the geometry tools and the tonal ones. */
+@Composable
+private fun ToolSwitch(selected: PerfectTool, onSelect: (PerfectTool) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        PerfectTool.entries.forEach { tool ->
+            val isSelected = tool == selected
+            Text(
+                text = tool.label,
+                color = if (isSelected) Color.White else Color(0xCCFFFFFF),
+                fontSize = 13.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (isSelected) Brand else Color(0x22FFFFFF))
+                    .clickable { onSelect(tool) }
+                    .padding(vertical = 8.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Blacks / shadows / highlights / whites: chips to choose a band, one slider for it. Matches how
+ * the camera and light editor present adjustments, and keeps the photo visible.
+ */
+@Composable
+private fun TonePanel(
+    tone: ToneAdjustments,
+    band: ToneBand,
+    onSelectBand: (ToneBand) -> Unit,
+    onChange: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0x59000000))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            ToneBand.entries.forEach { candidate ->
+                val isSelected = candidate == band
+                Text(
+                    text = candidate.label,
+                    color = if (isSelected) Color.White else Color(0xCCFFFFFF),
+                    fontSize = 11.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isSelected) Brand else Color(0x22FFFFFF))
+                        .clickable { onSelectBand(candidate) }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+        val value = tone.valueOf(band)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Slider(
+                value = value.toFloat(),
+                onValueChange = { onChange(it.roundToInt()) },
+                valueRange = -100f..100f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Brand,
+                    activeTrackColor = Brand,
+                    inactiveTrackColor = Color(0x55FFFFFF),
+                ),
+                modifier = Modifier.weight(1f).height(26.dp),
+            )
+            Text(
+                text = "$value",
+                color = Brand,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        }
+    }
 }
 
 @Composable
