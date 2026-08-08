@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -135,15 +136,16 @@ private fun RawBadge(modifier: Modifier = Modifier) {
 }
 
 /**
- * Local gallery. Tap a photo to view it; long-press to start selecting; tap more to add to the
- * selection; delete asks for confirmation first. Import a device photo (or open a saved one) into
- * the editor via [onEdit].
+ * Local gallery. Tap a photo to view it and swipe between photos; long-press to start selecting;
+ * tap more to add to the selection; delete asks for confirmation first. Import a device photo (or
+ * open a saved one) into the light editor via [onEdit] or the Perfect Editor via [onPerfectEdit].
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(
     onBack: () -> Unit,
     onEdit: (Uri) -> Unit,
+    onPerfectEdit: (Uri) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: GalleryViewModel = viewModel(),
 ) {
@@ -261,6 +263,7 @@ fun GalleryScreen(
                 startIndex = startIndex,
                 onClose = { viewingId = null },
                 onEdit = { photo -> onEdit(Uri.parse(photo.uri)) },
+                onPerfectEdit = { photo -> onPerfectEdit(Uri.parse(photo.uri)) },
                 onDelete = { photo -> confirmSingle = photo },
             )
         }
@@ -325,6 +328,7 @@ private fun PhotoPager(
     startIndex: Int,
     onClose: () -> Unit,
     onEdit: (PhotoEntity) -> Unit,
+    onPerfectEdit: (PhotoEntity) -> Unit,
     onDelete: (PhotoEntity) -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -372,6 +376,9 @@ private fun PhotoPager(
                     RawBadge(modifier = Modifier.padding(start = 8.dp))
                 }
                 Spacer(modifier = Modifier.weight(1f))
+                IconButton(onClick = { onPerfectEdit(current) }) {
+                    Icon(Icons.Filled.Crop, contentDescription = "Perfect Editor", tint = Color.White)
+                }
                 IconButton(onClick = { onEdit(current) }) {
                     Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
                 }

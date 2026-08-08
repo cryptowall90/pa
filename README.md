@@ -110,7 +110,23 @@ Fully native Kotlin. No cross-platform runtime.
   remains in the phone gallery.
 - Images load from their **MediaStore** content URIs via Coil.
 
-### Editor (`ui/edit/`)
+### Perfect Editor (`ui/perfect/`)
+
+The heavier editing surface, opened with the crop icon in the photo viewer. Its first release is
+geometry:
+
+- **Crop** with a draggable frame — corner and edge handles, rule-of-thirds grid, dimmed surround.
+- **Aspect ratios**: Original, Free, 1:1, 4:5, 9:16, 16:9, 3:2, 4:3, 5:7. With a ratio locked,
+  corners resize proportionally and the frame can be dragged around.
+- **Straighten** (−45°…45°), **rotate** in quarter turns, and **flip** both ways. Straightening
+  scales just enough to cover the frame, so a levelled photo never shows empty corners.
+- The edit is a declarative `ImageGeometry` (flips → turns → straighten → crop) with the crop held
+  in **normalized 0..1 coordinates**, so the preview and the full-resolution export frame
+  identically by construction. The maths lives in `capture/ImageGeometry.kt`, free of Android types
+  and **covered by unit tests** — the only part of the editor CI can actually execute.
+- Saves as a **new photo**; the source is never modified.
+
+### Light editor (`ui/edit/`)
 
 - Re-edit a saved photo (Edit in the viewer) or **import a device photo** (the
   system photo picker — no extra permission) into the editor.
