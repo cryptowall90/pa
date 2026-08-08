@@ -52,6 +52,19 @@ Fully native Kotlin. No cross-platform runtime.
    `DCIM/PicturePerfectX` via MediaStore (so shots appear in the phone gallery
    alongside camera photos).
 
+### RAW capture (JPEG / RAW / RAW+JPEG)
+
+- A **format chip** in the camera top bar cycles `JPEG → RAW → RAW+JPEG`. It only appears on
+  lenses that can actually produce a DNG (checked per-lens via
+  `ImageCapture.getImageCaptureCapabilities`), and captures silently fall back to JPEG elsewhere.
+- **RAW is never filtered.** A DNG is unprocessed sensor data by definition, so looks are baked
+  into JPEGs only. In `RAW+JPEG` the DNG is saved untouched and the JPEG gets the active LUT.
+- DNGs are written by CameraX straight into `DCIM/PicturePerfectX` alongside the JPEGs, so they
+  show up in the phone's gallery and import into desktop RAW tools.
+- Every RAW capture carries a **`RAW` badge** in the in-app gallery. RAW-only shots have no JPEG,
+  so their tile falls back to the DNG's embedded preview (Android ships no RAW decoder) — and the
+  light editor hides its Edit action for them rather than offering something it can't open.
+
 ### LUT pack + intensity (100 looks)
 
 - **100 real 512×512 GPUImage LUTs** shipped in `app/src/main/assets/luts/`,

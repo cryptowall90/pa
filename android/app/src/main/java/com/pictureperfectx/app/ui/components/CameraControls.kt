@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -32,8 +34,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.pictureperfectx.app.camera.CaptureFormat
 
 /** Circular icon button used by the flash and lens-switch controls. */
 @Composable
@@ -57,16 +62,41 @@ private fun CircleIconButton(
     }
 }
 
+/** Pill showing what the shutter writes; tapping it cycles JPEG -> RAW -> RAW+JPEG. */
+@Composable
+private fun CaptureFormatChip(format: CaptureFormat, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(48.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(if (format.writesRaw) Color(0xCCFF4D6D) else Color(0x33000000))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = format.label,
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
 /**
- * Top overlay bar: flash (left); filters toggle + adjustments toggle (right). The two toggles
- * let the user clear the filter strip and the sliders for a full-screen camera.
+ * Top overlay bar: flash + capture format (left); filters toggle + adjustments toggle (right). The
+ * two toggles let the user clear the filter strip and the sliders for a full-screen camera. The
+ * format chip only appears on lenses that can actually write a DNG.
  */
 @Composable
 fun CameraTopBar(
     flashMode: Int,
+    captureFormat: CaptureFormat,
+    rawSupported: Boolean,
     adjustmentsOpen: Boolean,
     filtersOpen: Boolean,
     onCycleFlash: () -> Unit,
+    onCycleCaptureFormat: () -> Unit,
     onToggleAdjustments: () -> Unit,
     onToggleFilters: () -> Unit,
     modifier: Modifier = Modifier,
@@ -80,7 +110,12 @@ fun CameraTopBar(
         modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        CircleIconButton(icon = icon, contentDescription = "Toggle flash", onClick = onCycleFlash)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            CircleIconButton(icon = icon, contentDescription = "Toggle flash", onClick = onCycleFlash)
+            if (rawSupported) {
+                CaptureFormatChip(format = captureFormat, onClick = onCycleCaptureFormat)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             CircleIconButton(
                 icon = Icons.Filled.FilterVintage,

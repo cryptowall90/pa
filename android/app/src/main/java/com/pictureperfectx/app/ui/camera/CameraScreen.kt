@@ -67,9 +67,12 @@ fun CameraScreen(
 
             CameraTopBar(
                 flashMode = state.flashMode,
+                captureFormat = state.captureFormat,
+                rawSupported = state.rawSupported,
                 adjustmentsOpen = state.showAdjustments,
                 filtersOpen = state.showFilters,
                 onCycleFlash = viewModel::onCycleFlash,
+                onCycleCaptureFormat = viewModel::onCycleCaptureFormat,
                 onToggleAdjustments = viewModel::onToggleAdjustments,
                 onToggleFilters = viewModel::onToggleFilters,
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp),

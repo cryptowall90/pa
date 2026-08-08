@@ -1,6 +1,7 @@
 package com.pictureperfectx.app.ui.camera
 
 import androidx.camera.core.ImageCapture
+import com.pictureperfectx.app.camera.CaptureFormat
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
 
@@ -9,6 +10,8 @@ data class CameraUiState(
     val selectedFilterId: String = Filter.ORIGINAL_ID,
     val intensity: Int = 100,               // 0-100 LUT strength
     val flashMode: Int = ImageCapture.FLASH_MODE_OFF,
+    val captureFormat: CaptureFormat = CaptureFormat.JPEG,
+    val rawSupported: Boolean = false,      // per-lens; hides the format control when false
     val isFrontFacing: Boolean = false,
     val isSaving: Boolean = false,
     val lastSavedThumbUri: String? = null,

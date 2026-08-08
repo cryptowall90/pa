@@ -1,11 +1,13 @@
 package com.pictureperfectx.app.ui.gallery
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -39,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,16 +51,81 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.pictureperfectx.app.capture.RawPreview
 import com.pictureperfectx.app.data.PhotoEntity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val Brand = Color(0xFFFF4D6D)
+
+private const val RAW_THUMB_PX = 512
+
+/**
+ * A photo in the grid. RAW-only captures have no JPEG to show, so they fall back to the DNG's
+ * embedded preview — Android can't decode the sensor data itself.
+ */
+@Composable
+private fun PhotoThumb(
+    photo: PhotoEntity,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+) {
+    if (!photo.isRawOnly) {
+        AsyncImage(
+            model = photo.uri,
+            contentDescription = photo.filterName,
+            contentScale = contentScale,
+            modifier = modifier,
+        )
+        return
+    }
+
+    val context = LocalContext.current
+    var preview by remember(photo.uri) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(photo.uri) {
+        preview = withContext(Dispatchers.IO) {
+            RawPreview.thumbnail(context, Uri.parse(photo.uri), RAW_THUMB_PX)
+        }
+    }
+
+    val bitmap = preview
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = photo.filterName,
+            contentScale = contentScale,
+            modifier = modifier,
+        )
+    } else {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(text = "RAW", color = Color(0x66FFFFFF), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** Corner marker identifying a capture that also wrote a DNG. */
+@Composable
+private fun RawBadge(modifier: Modifier = Modifier) {
+    Text(
+        text = "RAW",
+        color = Color.White,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xCC000000))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+    )
+}
 
 /**
  * Local gallery. Tap a photo to view it; long-press to start selecting; tap more to add to the
@@ -152,12 +221,10 @@ fun GalleryScreen(
                                 },
                             ),
                     ) {
-                        AsyncImage(
-                            model = photo.uri,
-                            contentDescription = photo.filterName,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                        PhotoThumb(photo = photo, modifier = Modifier.fillMaxSize())
+                        if (photo.isRaw) {
+                            RawBadge(modifier = Modifier.align(Alignment.BottomStart).padding(4.dp))
+                        }
                         if (isSelected) {
                             Box(Modifier.fillMaxSize().background(Color(0x552B6CFF)))
                             Icon(
@@ -248,11 +315,10 @@ private fun PhotoViewer(
             .clickable(onClick = onClose),
         contentAlignment = Alignment.Center,
     ) {
-        AsyncImage(
-            model = photo.uri,
-            contentDescription = photo.filterName,
-            contentScale = ContentScale.Fit,
+        PhotoThumb(
+            photo = photo,
             modifier = Modifier.fillMaxSize().padding(vertical = 64.dp),
+            contentScale = ContentScale.Fit,
         )
         Row(
             modifier = Modifier
@@ -270,10 +336,18 @@ private fun PhotoViewer(
                 color = Color.White,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f).padding(start = 4.dp),
+                modifier = Modifier.padding(start = 4.dp),
             )
-            IconButton(onClick = onEdit) {
-                Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
+            if (photo.isRaw) {
+                RawBadge(modifier = Modifier.padding(start = 8.dp))
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            // A DNG holds unprocessed sensor data the light editor can't open — RAW editing is a
+            // separate surface, so don't offer an action that would just spin.
+            if (!photo.isRawOnly) {
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Edit", tint = Color.White)
+                }
             }
             IconButton(onClick = onDelete) {
                 Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = Brand)
