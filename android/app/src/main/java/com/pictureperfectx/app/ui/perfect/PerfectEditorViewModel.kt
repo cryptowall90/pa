@@ -37,10 +37,18 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Which set of controls the editor is showing. Everything that changes pixels is an effect layer,
- * so there is no separate "tone" mode — that split was what made one word mean two different things.
+ * How much of the editor is showing.
+ *
+ * The editor opens [Closed] — the photo and nothing else. One button opens a [Menu] of two choices,
+ * and choosing one *replaces* the menu with that tool's controls rather than leaving a tab behind.
+ * Only what's in use is ever on screen, and the photo keeps whatever is left.
  */
-enum class PerfectTool(val label: String) { Crop("Crop"), Effects("Effects") }
+enum class EditorPanel(val label: String) {
+    Closed(""),
+    Menu(""),
+    Crop("Crop"),
+    Effects("Add effects"),
+}
 
 /** An effect the user can add, as offered by the effects picker. */
 enum class EffectKind(val label: String, val description: String) {
@@ -91,7 +99,7 @@ enum class LayerControl(val label: String) {
 
 data class PerfectEditUiState(
     val geometry: ImageGeometry = ImageGeometry(),
-    val tool: PerfectTool = PerfectTool.Crop,
+    val panel: EditorPanel = EditorPanel.Closed,
     /** Geometry plus the layer stack applied — what's displayed. */
     val canvas: Bitmap? = null,
     val document: Document = Document(),
@@ -120,7 +128,15 @@ data class PerfectEditUiState(
      * Areas can be drawn whenever effects are showing, with or without a layer selected — drawing
      * first and choosing the effect after is the whole point of a pending selection.
      */
-    val canSelect: Boolean get() = tool == PerfectTool.Effects
+    val canSelect: Boolean get() = panel == EditorPanel.Effects
+
+    /**
+     * A crop that has been set but not saved is invisible once its controls are put away, since the
+     * crop is applied at export rather than baked into the preview. Showing it read-only stops that
+     * being a surprise at save time; an untouched photo shows nothing at all.
+     */
+    val showsCropPreview: Boolean
+        get() = (panel == EditorPanel.Closed || panel == EditorPanel.Menu) && !geometry.crop.isFull
 
     /** The area currently being edited: the selected layer's, or the one drawn ahead of a layer. */
     val activeMask: Mask?
@@ -239,7 +255,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applyGeometry(ImageGeometry())
     }
 
-    fun onSelectTool(tool: PerfectTool) = _state.update { it.copy(tool = tool) }
+    /**
+     * The edit button. It always means "put everything away and show me the photo" — except when
+     * there is nothing to put away, where it opens the menu instead.
+     */
+    fun onToggleMenu() = _state.update {
+        it.copy(panel = if (it.panel == EditorPanel.Closed) EditorPanel.Menu else EditorPanel.Closed)
+    }
+
+    fun onOpenPanel(panel: EditorPanel) = _state.update { it.copy(panel = panel) }
+
+    /** Steps a tool back to the menu, so switching tools doesn't mean collapsing first. */
+    fun onBackToMenu() = _state.update { it.copy(panel = EditorPanel.Menu) }
 
     // ---- Rendering ------------------------------------------------------------------------------
 

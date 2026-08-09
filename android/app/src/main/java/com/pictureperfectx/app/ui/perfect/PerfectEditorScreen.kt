@@ -24,8 +24,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
@@ -33,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
@@ -110,6 +113,8 @@ fun PerfectEditorScreen(
     var addingEffect by remember { mutableStateOf(false) }
 
     LaunchedEffect(sourceUri) { viewModel.load(sourceUri) }
+    // Leaving effects abandons a half-opened picker, so it isn't waiting on the way back in.
+    LaunchedEffect(state.panel) { if (state.panel != EditorPanel.Effects) addingEffect = false }
     LaunchedEffect(state.savedMessage) {
         state.savedMessage?.let { snackbar.showSnackbar(it); viewModel.consumeMessage() }
     }
@@ -179,21 +184,30 @@ fun PerfectEditorScreen(
             ) {
                 state.notice?.let { CameraNotice(text = it, onDismiss = viewModel::consumeNotice) }
 
-                ToolSwitch(selected = state.tool, onSelect = viewModel::onSelectTool)
+                when (state.panel) {
+                    EditorPanel.Closed -> Unit
 
-                when (state.tool) {
-                    PerfectTool.Effects -> EffectsControls(
+                    EditorPanel.Menu -> MenuRow(onOpen = viewModel::onOpenPanel)
+
+                    EditorPanel.Effects -> EffectsControls(
                         state = state,
                         viewModel = viewModel,
                         addingEffect = addingEffect,
                         onAddingEffect = { addingEffect = it },
                     )
 
-                    PerfectTool.Crop -> {
-                        StraightenSlider(
-                            degrees = state.geometry.straightenDegrees,
-                            onChange = viewModel::onStraighten,
-                        )
+                    EditorPanel.Crop -> {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            BackToMenu(onClick = viewModel::onBackToMenu)
+                            StraightenSlider(
+                                degrees = state.geometry.straightenDegrees,
+                                onChange = viewModel::onStraighten,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
@@ -214,8 +228,79 @@ fun PerfectEditorScreen(
                         AspectRow(selected = state.geometry.aspect, onSelect = viewModel::onAspectSelected)
                     }
                 }
+
+                // Kept below the panel and always in the same place: a control that moves as panels
+                // open and close is a control you have to go looking for.
+                EditCircle(
+                    isOpen = state.panel != EditorPanel.Closed,
+                    onClick = viewModel::onToggleMenu,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
             }
         }
+    }
+}
+
+/**
+ * The one control the editor opens with. Tapping it puts everything away and leaves the photo —
+ * unless there is nothing to put away, in which case it offers the menu.
+ */
+@Composable
+private fun EditCircle(isOpen: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .size(52.dp)
+            .clip(CircleShape)
+            .background(if (isOpen) Color(0x33FFFFFF) else Brand)
+            .border(width = 1.dp, color = Brand, shape = CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (isOpen) Icons.Filled.Close else Icons.Filled.Edit,
+            contentDescription = if (isOpen) "Hide the controls" else "Edit this photo",
+            tint = Color.White,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/** The two things the editor can do. Choosing one replaces this row with that tool's controls. */
+@Composable
+private fun MenuRow(onOpen: (EditorPanel) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        listOf(EditorPanel.Crop, EditorPanel.Effects).forEach { panel ->
+            Text(
+                text = panel.label,
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0x22FFFFFF))
+                    .border(1.dp, Color(0x44FFFFFF), RoundedCornerShape(12.dp))
+                    .clickable { onOpen(panel) }
+                    .padding(vertical = 10.dp),
+            )
+        }
+    }
+}
+
+/** Steps a tool back to the menu, so switching tools needn't go through the photo. */
+@Composable
+private fun BackToMenu(onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
+        Icon(
+            Icons.AutoMirrored.Filled.ArrowBack,
+            contentDescription = "Back to the edit menu",
+            tint = Color(0xCCFFFFFF),
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 
@@ -288,13 +373,25 @@ private fun EditorStage(
             )
 
             // The crop frame would only get in the way while judging an effect, so it's crop-only.
-            state.tool == PerfectTool.Crop -> CropOverlay(
+            state.panel == EditorPanel.Crop -> CropOverlay(
                 crop = state.geometry.crop,
                 imageBounds = bounds,
                 lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
                 sourceRatio = state.canvasRatio,
                 onCropChanged = onCropChanged,
                 modifier = Modifier.fillMaxSize(),
+            )
+
+            // Controls put away, but a crop already set: show what will be kept, without the grips
+            // that would invite a drag nothing is listening for.
+            state.showsCropPreview -> CropOverlay(
+                crop = state.geometry.crop,
+                imageBounds = bounds,
+                lockedRatio = null,
+                sourceRatio = state.canvasRatio,
+                onCropChanged = {},
+                modifier = Modifier.fillMaxSize(),
+                interactive = false,
             )
         }
     }
@@ -458,6 +555,22 @@ private fun EffectsControls(
     addingEffect: Boolean,
     onAddingEffect: (Boolean) -> Unit,
 ) {
+    val layer = state.document.selected
+
+    // How an area gets chosen, first — drawing comes before there is anything to apply.
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BackToMenu(onClick = viewModel::onBackToMenu)
+        SelectionChips(
+            state = state,
+            viewModel = viewModel,
+            layer = layer,
+            modifier = Modifier.weight(1f),
+        )
+    }
+
     if (addingEffect) {
         EffectPickerRow(
             onPick = { kind ->
@@ -466,19 +579,16 @@ private fun EffectsControls(
             },
             onCancel = { onAddingEffect(false) },
         )
-        return
+    } else {
+        LayerRow(
+            state = state,
+            onAdd = { onAddingEffect(true) },
+            onSelectLayer = viewModel::onSelectLayer,
+            onToggleVisible = viewModel::onToggleLayerVisibility,
+        )
     }
 
-    LayerRow(
-        state = state,
-        onAdd = { onAddingEffect(true) },
-        onSelectLayer = viewModel::onSelectLayer,
-        onToggleVisible = viewModel::onToggleLayerVisibility,
-    )
-
-    val layer = state.document.selected
     if (layer == null) {
-        SelectionChips(state = state, viewModel = viewModel, layer = null)
         if (state.selectionTool == SelectionTool.Brush) {
             ValueSlider(
                 value = state.brushRadius,
@@ -516,7 +626,6 @@ private fun EffectsControls(
     }
 
     ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
-    SelectionChips(state = state, viewModel = viewModel, layer = layer)
 }
 
 /** The single slider, showing whichever property the chips selected. */
@@ -575,10 +684,11 @@ private fun SelectionChips(
     state: PerfectEditUiState,
     viewModel: PerfectEditorViewModel,
     layer: Layer?,
+    modifier: Modifier = Modifier,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 20.dp),
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(SelectionTool.entries.toList(), key = { it.name }) { tool ->
@@ -647,32 +757,6 @@ private fun EffectPickerRow(onPick: (EffectKind) -> Unit, onCancel: () -> Unit) 
 }
 
 // ---- Shared pieces ------------------------------------------------------------------------------
-
-/** Switches the bottom controls between geometry and effects. */
-@Composable
-private fun ToolSwitch(selected: PerfectTool, onSelect: (PerfectTool) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PerfectTool.entries.forEach { tool ->
-            val isSelected = tool == selected
-            Text(
-                text = tool.label,
-                color = if (isSelected) Color.White else Color(0xCCFFFFFF),
-                fontSize = 13.sp,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (isSelected) Brand else Color(0x22FFFFFF))
-                    .clickable { onSelect(tool) }
-                    .padding(vertical = 8.dp),
-            )
-        }
-    }
-}
 
 /**
  * One slider with a readout. [onChangeFinished] is what turns a whole drag into a single undo
@@ -766,9 +850,9 @@ private fun PanelChip(label: String, isSelected: Boolean = false, onClick: () ->
 }
 
 @Composable
-private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit) {
+private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        modifier = modifier.padding(end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = "Straighten", color = Color(0xCCFFFFFF), fontSize = 12.sp)

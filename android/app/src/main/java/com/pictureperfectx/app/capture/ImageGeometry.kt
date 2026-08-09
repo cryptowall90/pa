@@ -18,6 +18,15 @@ data class CropRect(
 ) {
     val width: Float get() = right - left
     val height: Float get() = bottom - top
+
+    /** Whether the frame still covers the whole image, i.e. nothing has actually been cropped. */
+    val isFull: Boolean
+        get() = left <= EDGE && top <= EDGE && right >= 1f - EDGE && bottom >= 1f - EDGE
+
+    private companion object {
+        /** A drag can leave a fraction of a pixel behind; that isn't a crop. */
+        const val EDGE = 0.001f
+    }
 }
 
 /** An integer pixel rectangle, ready for `Bitmap.createBitmap`. */
