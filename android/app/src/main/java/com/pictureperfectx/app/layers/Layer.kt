@@ -32,6 +32,15 @@ data class Mask(
     /** Softness of the mask edge, 0..1. */
     val feather: Float = 0.35f,
     val inverted: Boolean = false,
+    /**
+     * The lasso that produced this coverage, kept only while it still describes the whole area.
+     *
+     * It survives a lasso drawn fresh and nothing else: brushing, adding and subtracting all leave
+     * a shape the polygon no longer matches, and handles on a shape they don't describe would be
+     * worse than no handles. When it's present the outline is drawn from it directly and its points
+     * can be dragged.
+     */
+    val path: List<MaskPoint>? = null,
 ) {
     val isEmpty: Boolean get() = coverage.isEmpty()
 
@@ -106,7 +115,8 @@ data class Mask(
         if (this === other) return true
         if (other !is Mask) return false
         return columns == other.columns && rows == other.rows && feather == other.feather &&
-            inverted == other.inverted && coverage.contentEquals(other.coverage)
+            inverted == other.inverted && path == other.path &&
+            coverage.contentEquals(other.coverage)
     }
 
     override fun hashCode(): Int {
@@ -114,6 +124,7 @@ data class Mask(
         result = 31 * result + rows
         result = 31 * result + feather.hashCode()
         result = 31 * result + inverted.hashCode()
+        result = 31 * result + path.hashCode()
         result = 31 * result + coverage.contentHashCode()
         return result
     }
