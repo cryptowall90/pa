@@ -1,6 +1,5 @@
 package com.pictureperfectx.app.ui.perfect
 
-import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -71,9 +70,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,6 +82,7 @@ import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.Mask
+import com.pictureperfectx.app.layers.MaskOutline
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.ui.components.CameraNotice
@@ -91,8 +91,8 @@ import kotlin.math.roundToInt
 
 private val Brand = Color(0xFFFF4D6D)
 
-/** How strongly a selected area is tinted, out of 255. Enough to read, light enough to see through. */
-private const val SELECTION_TINT_ALPHA = 80
+/** Margin around the photo, in dp. Small — the picture is what the screen is for. */
+private const val STAGE_INSET = 4
 
 /**
  * The Perfect Editor: crop and geometry, plus a stack of masked effect layers.
@@ -125,62 +125,20 @@ fun PerfectEditorScreen(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.Filled.Close, contentDescription = "Cancel", tint = Color.White)
-                }
-                Text(
-                    text = "Perfect Editor",
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
-                IconButton(onClick = viewModel::onUndo, enabled = state.canUndo) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = "Undo",
-                        tint = if (state.canUndo) Color.White else Color(0x55FFFFFF),
-                    )
-                }
-                IconButton(onClick = viewModel::onRedo, enabled = state.canRedo) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = "Redo",
-                        tint = if (state.canRedo) Color.White else Color(0x55FFFFFF),
-                    )
-                }
-                IconButton(onClick = viewModel::onReset, enabled = state.ready) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "Reset", tint = Color.White)
-                }
-                if (state.isSaving) {
-                    CircularProgressIndicator(
-                        color = Brand,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(24.dp).padding(end = 8.dp),
-                    )
-                } else {
-                    IconButton(onClick = { viewModel.save(onSaved) }, enabled = state.ready) {
-                        Icon(Icons.Filled.Check, contentDescription = "Save", tint = Brand)
-                    }
-                }
-            }
-
+            // The photo takes everything above the controls, and starts just under the status bar
+            // rather than behind it.
             EditorStage(
                 state = state,
                 onCropChanged = viewModel::onCropChanged,
                 onPaint = viewModel::onPaintMask,
                 onStrokeEnd = viewModel::endStroke,
                 onLasso = viewModel::onLassoCommitted,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.weight(1f).fillMaxWidth().statusBarsPadding(),
             )
 
             Column(
-                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 state.notice?.let { CameraNotice(text = it, onDismiss = viewModel::consumeNotice) }
 
@@ -229,15 +187,90 @@ fun PerfectEditorScreen(
                     }
                 }
 
-                // Kept below the panel and always in the same place: a control that moves as panels
-                // open and close is a control you have to go looking for.
-                EditCircle(
-                    isOpen = state.panel != EditorPanel.Closed,
-                    onClick = viewModel::onToggleMenu,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                // Everything that used to sit in a bar above the photo, in one row below it. The
+                // circle stays put as panels open and close — a control that moves is a control you
+                // have to go looking for.
+                ActionRow(
+                    state = state,
+                    onBack = onBack,
+                    onUndo = viewModel::onUndo,
+                    onRedo = viewModel::onRedo,
+                    onReset = viewModel::onReset,
+                    onSave = { viewModel.save(onSaved) },
+                    onToggleMenu = viewModel::onToggleMenu,
                 )
             }
         }
+    }
+}
+
+/** Cancel, history, the edit circle and save — the whole chrome of the editor, in one row. */
+@Composable
+private fun ActionRow(
+    state: PerfectEditUiState,
+    onBack: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onReset: () -> Unit,
+    onSave: () -> Unit,
+    onToggleMenu: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ActionIcon(Icons.Filled.Close, "Cancel", onClick = onBack)
+        ActionIcon(
+            icon = Icons.AutoMirrored.Filled.Undo,
+            description = "Undo",
+            enabled = state.canUndo,
+            onClick = onUndo,
+        )
+        ActionIcon(
+            icon = Icons.AutoMirrored.Filled.Redo,
+            description = "Redo",
+            enabled = state.canRedo,
+            onClick = onRedo,
+        )
+
+        EditCircle(isOpen = state.panel != EditorPanel.Closed, onClick = onToggleMenu)
+
+        ActionIcon(
+            icon = Icons.Filled.Refresh,
+            description = "Reset",
+            enabled = state.ready,
+            onClick = onReset,
+        )
+        if (state.isSaving) {
+            CircularProgressIndicator(color = Brand, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+        } else {
+            ActionIcon(
+                icon = Icons.Filled.Check,
+                description = "Save",
+                enabled = state.ready,
+                tint = Brand,
+                onClick = onSave,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    enabled: Boolean = true,
+    tint: Color = Color.White,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = description,
+            tint = if (enabled) tint else Color(0x55FFFFFF),
+            modifier = Modifier.size(21.dp),
+        )
     }
 }
 
@@ -249,7 +282,7 @@ fun PerfectEditorScreen(
 private fun EditCircle(isOpen: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .size(52.dp)
+            .size(48.dp)
             .clip(CircleShape)
             .background(if (isOpen) Color(0x33FFFFFF) else Brand)
             .border(width = 1.dp, color = Brand, shape = CircleShape)
@@ -260,7 +293,7 @@ private fun EditCircle(isOpen: Boolean, onClick: () -> Unit, modifier: Modifier 
             imageVector = if (isOpen) Icons.Filled.Close else Icons.Filled.Edit,
             contentDescription = if (isOpen) "Hide the controls" else "Edit this photo",
             tint = Color.White,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -276,7 +309,7 @@ private fun MenuRow(onOpen: (EditorPanel) -> Unit) {
             Text(
                 text = panel.label,
                 color = Color.White,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
@@ -335,25 +368,27 @@ private fun EditorStage(
             bitmap = canvas.asImageBitmap(),
             contentDescription = "Preview",
             contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().padding(12.dp),
+            modifier = Modifier.fillMaxSize().padding(STAGE_INSET.dp),
         )
 
         // ContentScale.Fit letterboxes, so work out the drawn rectangle to anchor everything else.
-        val bounds = remember(stageSize, canvas.width, canvas.height) {
+        // The inset here has to match the padding above or every touch lands slightly off.
+        val insetPx = with(LocalDensity.current) { STAGE_INSET.dp.toPx() }
+        val bounds = remember(stageSize, canvas.width, canvas.height, insetPx) {
             fittedBounds(
                 containerWidth = stageSize.width.toFloat(),
                 containerHeight = stageSize.height.toFloat(),
                 imageWidth = canvas.width.toFloat(),
                 imageHeight = canvas.height.toFloat(),
-                inset = 12f,
+                inset = insetPx,
             )
         }
 
-        // A subtle effect wouldn't show its own boundary, so the chosen area is tinted. Without
-        // this, drawing an area before picking an effect would look like nothing had happened.
+        // The area is outlined rather than filled. A fill sits over exactly the pixels whose change
+        // the user is judging, which makes it useless the moment an adjustment starts.
         if (state.canSelect) {
             state.activeMask?.let { mask ->
-                SelectionTint(mask = mask, imageBounds = bounds, modifier = Modifier.fillMaxSize())
+                SelectionOutline(mask = mask, imageBounds = bounds, modifier = Modifier.fillMaxSize())
             }
         }
 
@@ -397,26 +432,33 @@ private fun EditorStage(
     }
 }
 
-/** Tints the chosen area over the photo, so a selection is visible before any effect lands on it. */
+/**
+ * Draws the boundary of the chosen area, leaving the pixels inside it alone.
+ *
+ * The line is stroked twice — a dark underlay then a light line over it — so it stays legible
+ * against a bright sky and a dark shadow without needing to animate.
+ */
 @Composable
-private fun SelectionTint(mask: Mask, imageBounds: Rect, modifier: Modifier = Modifier) {
-    // The coverage grid is far smaller than the photo; drawing it scaled up gets the soft edge for
-    // free, the same way LayerRenderer applies a mask.
-    val tint = remember(mask) {
-        val pixels = IntArray(mask.columns * mask.rows) { index ->
-            val coverage = mask.coverageAt(index % mask.columns, index / mask.columns)
-            val alpha = (coverage.coerceIn(0f, 1f) * SELECTION_TINT_ALPHA).roundToInt()
-            (alpha shl 24) or 0x00FF4D6D
-        }
-        Bitmap.createBitmap(pixels, mask.columns, mask.rows, Bitmap.Config.ARGB_8888).asImageBitmap()
-    }
+private fun SelectionOutline(mask: Mask, imageBounds: Rect, modifier: Modifier = Modifier) {
+    // Mask compares by content, so this only recomputes when the area actually changes.
+    val edges = remember(mask) { MaskOutline.segments(mask) }
+    if (edges.isEmpty()) return
+
     Canvas(modifier = modifier) {
         if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@Canvas
-        drawImage(
-            image = tint,
-            dstOffset = IntOffset(imageBounds.left.roundToInt(), imageBounds.top.roundToInt()),
-            dstSize = IntSize(imageBounds.width.roundToInt(), imageBounds.height.roundToInt()),
-        )
+        val outline = Path()
+        edges.forEach { edge ->
+            outline.moveTo(
+                imageBounds.left + edge.x0 * imageBounds.width,
+                imageBounds.top + edge.y0 * imageBounds.height,
+            )
+            outline.lineTo(
+                imageBounds.left + edge.x1 * imageBounds.width,
+                imageBounds.top + edge.y1 * imageBounds.height,
+            )
+        }
+        drawPath(outline, color = Color(0xCC000000), style = Stroke(width = 3.dp.toPx()))
+        drawPath(outline, color = Color.White, style = Stroke(width = 1.5.dp.toPx()))
     }
 }
 
@@ -597,6 +639,10 @@ private fun EffectsControls(
                 onChange = viewModel::onBrushRadius,
             )
         }
+        // An area can be softened before its effect is chosen, the same as after.
+        if (state.pendingSelection != null) {
+            FeatherSlider(state = state, viewModel = viewModel)
+        }
         Text(
             text = if (state.pendingSelection == null) {
                 "Draw around an area, then add an effect to apply it only there."
@@ -604,7 +650,7 @@ private fun EffectsControls(
                 "Area ready — add an effect and it applies only there."
             },
             color = Color(0xAAFFFFFF),
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             modifier = Modifier.padding(horizontal = 20.dp),
         )
         return
@@ -663,6 +709,8 @@ private fun ControlSlider(
             readout = "${(state.brushRadius * 100).roundToInt()}",
             onChange = viewModel::onBrushRadius,
         )
+
+        control == LayerControl.Feather -> FeatherSlider(state = state, viewModel = viewModel)
 
         else -> ValueSlider(
             value = layer.opacity,
@@ -758,6 +806,19 @@ private fun EffectPickerRow(onPick: (EffectKind) -> Unit, onCancel: () -> Unit) 
 
 // ---- Shared pieces ------------------------------------------------------------------------------
 
+/** How softly the effect stops at the area's edge, for whichever area is live. */
+@Composable
+private fun FeatherSlider(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+    val feather = state.activeMask?.feather ?: return
+    ValueSlider(
+        value = feather,
+        range = 0f..1f,
+        readout = "${(feather * 100).roundToInt()}",
+        onChange = viewModel::onFeather,
+        onChangeFinished = viewModel::commitLayerEdit,
+    )
+}
+
 /**
  * One slider with a readout. [onChangeFinished] is what turns a whole drag into a single undo
  * step, rather than one per pixel of travel.
@@ -788,7 +849,7 @@ private fun ValueSlider(
         )
         Text(
             text = readout,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             color = Brand,
             modifier = Modifier.padding(start = 10.dp).width(44.dp),
@@ -820,7 +881,7 @@ private fun LayerChip(
         Text(
             text = layer.name,
             color = if (layer.isVisible) Color.White else Color(0x77FFFFFF),
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
         )
         IconButton(onClick = onToggleVisible, modifier = Modifier.size(28.dp)) {
@@ -839,7 +900,7 @@ private fun PanelChip(label: String, isSelected: Boolean = false, onClick: () ->
     Text(
         text = label,
         color = if (isSelected) Color.White else Color(0xCCFFFFFF),
-        fontSize = 11.sp,
+        fontSize = 10.sp,
         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
@@ -855,7 +916,7 @@ private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit, modifier
         modifier = modifier.padding(end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "Straighten", color = Color(0xCCFFFFFF), fontSize = 12.sp)
+        Text(text = "Straighten", color = Color(0xCCFFFFFF), fontSize = 11.sp)
         Slider(
             value = degrees,
             onValueChange = onChange,
@@ -870,7 +931,7 @@ private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit, modifier
         Text(
             text = "${degrees.roundToInt()}°",
             color = Brand,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
         )
     }
@@ -905,7 +966,7 @@ private fun AspectRow(selected: AspectRatio, onSelect: (AspectRatio) -> Unit) {
             Text(
                 text = aspect.label,
                 color = if (isSelected) Color.White else Color(0xCCFFFFFF),
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))

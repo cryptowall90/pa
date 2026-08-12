@@ -55,7 +55,7 @@ data class Mask(
             val value = coverage[index]
             if (inverted) 1f - value else value
         }
-        val radius = (feather.coerceIn(0f, 1f) * MAX_FEATHER_RADIUS).toInt()
+        val radius = featherRadius()
         if (radius <= 0) return oriented
 
         var source = oriented
@@ -65,6 +65,21 @@ data class Mask(
             blurAxis(target, source, radius, horizontal = false)
         }
         return source
+    }
+
+    /**
+     * The blur radius in cells, as a share of the grid's long axis.
+     *
+     * Quoting it in cells would make the same [feather] mean three different things on the brush's
+     * 64-cell grid and a selection's 192-cell one — the finer the grid, the less a fixed number of
+     * cells covers. As a fraction it means one thing: a share of the picture.
+     */
+    private fun featherRadius(): Int {
+        val amount = feather.coerceIn(0f, 1f)
+        if (amount <= 0f) return 0
+        val span = maxOf(columns, rows) * amount * FEATHER_FRACTION
+        // Any feather at all should visibly soften, even on a grid too coarse to round up to one.
+        return maxOf(1, span.roundToInt())
     }
 
     private fun blurAxis(source: FloatArray, target: FloatArray, radius: Int, horizontal: Boolean) {
@@ -115,7 +130,8 @@ data class Mask(
         /** A drawn edge should read as deliberate, so selections feather less than a brushed mask. */
         const val SELECTION_FEATHER = 0.12f
 
-        private const val MAX_FEATHER_RADIUS = 6
+        /** Blur radius at full feather, as a share of the grid's long axis. */
+        private const val FEATHER_FRACTION = 0.08f
         private const val PASSES = 2
 
         fun full(columns: Int = DEFAULT_RESOLUTION, rows: Int = DEFAULT_RESOLUTION): Mask =

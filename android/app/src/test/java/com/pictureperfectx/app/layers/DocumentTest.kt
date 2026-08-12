@@ -177,6 +177,33 @@ class DocumentTest {
     }
 
     @Test
+    fun `the same feather softens the same share of the picture at any grid size`() {
+        // The brush works on a coarse grid and a lasso selection on a fine one. If the blur radius
+        // were quoted in cells, one slider position would mean a broad falloff on the brush's grid
+        // and almost nothing on the selection's, since a cell there covers a third as much picture.
+        fun spread(size: Int): Float {
+            val coverage = FloatArray(size * size) { index ->
+                // The left half covered, so there is one straight edge down the middle to soften.
+                if (index % size < size / 2) 1f else 0f
+            }
+            val softened = Mask(size, size, coverage, feather = 0.5f).softened()
+            val row = size / 2
+            val touched = (0 until size).count { column ->
+                val value = softened[row * size + column]
+                value > 0.02f && value < 0.98f
+            }
+            return touched.toFloat() / size
+        }
+
+        assertEquals(
+            "the falloff should span the same fraction of the image on both grids",
+            spread(64),
+            spread(192),
+            0.06f, // room for a radius that has to round to a whole cell on each grid
+        )
+    }
+
+    @Test
     fun `a blank mask starts with no coverage`() {
         val blank = Mask.blank(4, 4)
         assertFalse(blank.isEmpty)

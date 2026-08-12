@@ -71,6 +71,7 @@ enum class LayerControl(val label: String) {
     Whites("Whites"),
     Blur("Blur"),
     Opacity("Opacity"),
+    Feather("Feather"),
     BrushSize("Brush size");
 
     /** The tonal band this control edits, for the four that are one. */
@@ -92,6 +93,8 @@ enum class LayerControl(val label: String) {
                 is Layer.Look -> Unit
             }
             add(Opacity)
+            // Feathering an area that doesn't exist is a slider that does nothing.
+            if (!layer.mask.isEmpty) add(Feather)
             if (tool == SelectionTool.Brush) add(BrushSize)
         }
     }
@@ -462,6 +465,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onBrushRadius(radius: Float) = _state.update { it.copy(brushRadius = radius.coerceIn(0.02f, 0.5f)) }
+
+    /**
+     * How softly the effect stops at the area's edge. Routes to whichever area is live — the
+     * selected layer's, or one drawn before an effect was chosen — the same way an edit does.
+     */
+    fun onFeather(value: Float) {
+        val state = _state.value
+        val layer = state.document.selected
+        val current = if (layer != null) layer.mask.takeUnless { it.isEmpty } else state.pendingSelection
+        val feathered = (current ?: return).copy(feather = value.coerceIn(0f, 1f))
+        applySelection(state, layer, feathered, record = false)
+    }
 
     /** A finished lasso, as normalized points. One drawn shape is one undo step. */
     fun onLassoCommitted(path: List<MaskPoint>) {
