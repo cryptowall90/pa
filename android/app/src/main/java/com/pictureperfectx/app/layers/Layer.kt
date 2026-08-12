@@ -136,7 +136,7 @@ data class Mask(
          * Selections get a finer grid than the brush. 64 cells is plenty for a soft dab and far too
          * coarse for a drawn outline, where the staircase would be the first thing you notice.
          */
-        const val SELECTION_RESOLUTION = 192
+        const val SELECTION_RESOLUTION = 256
 
         /** A drawn edge should read as deliberate, so selections feather less than a brushed mask. */
         const val SELECTION_FEATHER = 0.12f
