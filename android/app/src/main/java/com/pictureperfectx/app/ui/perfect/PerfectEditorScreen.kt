@@ -7,7 +7,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +33,6 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -54,25 +55,32 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -93,6 +101,16 @@ private val Brand = Color(0xFFFF4D6D)
 
 /** Margin around the photo, in dp. Small — the picture is what the screen is for. */
 private const val STAGE_INSET = 4
+
+/** How far in a pinch can go. Beyond this the preview's own pixels are the limit, not the zoom. */
+private const val MAX_ZOOM = 8f
+
+/** Drawn size of a lasso handle, and how close a touch must land to grab one. */
+private const val HANDLE_RADIUS = 5
+private const val HANDLE_TOUCH_RADIUS = 24
+
+private const val LOUPE_RADIUS = 46
+private const val LOUPE_MAGNIFICATION = 2.5f
 
 /**
  * The Perfect Editor: crop and geometry, plus a stack of masked effect layers.
@@ -133,6 +151,7 @@ fun PerfectEditorScreen(
                 onPaint = viewModel::onPaintMask,
                 onStrokeEnd = viewModel::endStroke,
                 onLasso = viewModel::onLassoCommitted,
+                onMovePoint = viewModel::onMovePathPoint,
                 modifier = Modifier.weight(1f).fillMaxWidth().statusBarsPadding(),
             )
 
@@ -340,8 +359,12 @@ private fun BackToMenu(onClick: () -> Unit) {
 // ---- Stage --------------------------------------------------------------------------------------
 
 /**
- * The photo, plus whichever overlay the current tool needs: the crop frame, or a surface for
- * drawing the area an effect applies to.
+ * The photo, its overlays, and every gesture that lands on it.
+ *
+ * One gesture loop routes by pointer count — two fingers zoom and pan, one draws — because two
+ * competing detectors on the same surface each steal events from the other. The transform is folded
+ * into the [fittedBounds] rect that overlays and touch mapping already work against, so all of them
+ * follow the zoom without knowing it exists. Nothing may read the untransformed rect.
  */
 @Composable
 private fun EditorStage(
@@ -350,13 +373,29 @@ private fun EditorStage(
     onPaint: (Float, Float) -> Unit,
     onStrokeEnd: () -> Unit,
     onLasso: (List<MaskPoint>) -> Unit,
+    onMovePoint: (Int, MaskPoint) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    // The lasso being drawn right now, in screen pixels. Committed on release.
+    var trace by remember { mutableStateOf(emptyList<Offset>()) }
+    // Where the finger is, so the magnifier can show what it's covering. Null between strokes.
+    var touch by remember { mutableStateOf<Offset?>(null) }
     val canvas = state.canvas
 
+    // Zoom is for precision inside an area. The crop frame is about the whole picture, so cropping
+    // always happens at fit.
+    LaunchedEffect(state.panel) {
+        if (state.panel == EditorPanel.Crop) {
+            scale = 1f
+            offset = Offset.Zero
+        }
+    }
+
     Box(
-        modifier = modifier.onSizeChanged { stageSize = it },
+        modifier = modifier.clipToBounds().onSizeChanged { stageSize = it },
         contentAlignment = Alignment.Center,
     ) {
         if (canvas == null) {
@@ -364,17 +403,9 @@ private fun EditorStage(
             return@Box
         }
 
-        Image(
-            bitmap = canvas.asImageBitmap(),
-            contentDescription = "Preview",
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize().padding(STAGE_INSET.dp),
-        )
-
-        // ContentScale.Fit letterboxes, so work out the drawn rectangle to anchor everything else.
-        // The inset here has to match the padding above or every touch lands slightly off.
+        val image = remember(canvas) { canvas.asImageBitmap() }
         val insetPx = with(LocalDensity.current) { STAGE_INSET.dp.toPx() }
-        val bounds = remember(stageSize, canvas.width, canvas.height, insetPx) {
+        val fitted = remember(stageSize, canvas.width, canvas.height, insetPx) {
             fittedBounds(
                 containerWidth = stageSize.width.toFloat(),
                 containerHeight = stageSize.height.toFloat(),
@@ -383,43 +414,41 @@ private fun EditorStage(
                 inset = insetPx,
             )
         }
+        val centre = Offset(stageSize.width / 2f, stageSize.height / 2f)
+        // The single source of truth for where the photo actually is. Overlays and touches both
+        // read it, so they cannot end up disagreeing about the zoom.
+        val bounds = fitted.scaledAbout(centre, scale).translated(offset)
 
-        // The area is outlined rather than filled. A fill sits over exactly the pixels whose change
-        // the user is judging, which makes it useless the moment an adjustment starts.
-        if (state.canSelect) {
-            state.activeMask?.let { mask ->
-                SelectionOutline(mask = mask, imageBounds = bounds, modifier = Modifier.fillMaxSize())
-            }
-        }
+        Image(
+            bitmap = image,
+            contentDescription = "Preview",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(STAGE_INSET.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+        )
 
-        when {
-            state.canSelect && state.selectionTool == SelectionTool.Lasso -> LassoSurface(
-                imageBounds = bounds,
-                onCommit = onLasso,
-                modifier = Modifier.fillMaxSize(),
-            )
+        DrawingLayer(
+            state = state,
+            image = image,
+            bounds = bounds,
+            trace = trace,
+            touch = touch,
+            stageSize = stageSize,
+            modifier = Modifier.fillMaxSize(),
+        )
 
-            // Painting takes over the drag gesture rather than competing with the crop frame.
-            state.canSelect -> MaskPaintSurface(
-                imageBounds = bounds,
-                onPaint = onPaint,
-                onStrokeEnd = onStrokeEnd,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            // The crop frame would only get in the way while judging an effect, so it's crop-only.
-            state.panel == EditorPanel.Crop -> CropOverlay(
-                crop = state.geometry.crop,
-                imageBounds = bounds,
-                lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
-                sourceRatio = state.canvasRatio,
-                onCropChanged = onCropChanged,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            // Controls put away, but a crop already set: show what will be kept, without the grips
-            // that would invite a drag nothing is listening for.
-            state.showsCropPreview -> CropOverlay(
+        // Controls put away, but a crop already set: show what will be kept, without the grips that
+        // would invite a drag nothing is listening for. It takes no touches, so it doesn't stand
+        // between the gesture surface and the photo.
+        if (state.showsCropPreview) {
+            CropOverlay(
                 crop = state.geometry.crop,
                 imageBounds = bounds,
                 lockedRatio = null,
@@ -429,135 +458,334 @@ private fun EditorStage(
                 interactive = false,
             )
         }
+
+        // Cropping keeps its own gestures and its own frame. Hit testing stops at the topmost
+        // sibling under the finger, so the drawing surface is left out entirely here rather than
+        // sitting on top declining to consume — which would swallow every crop drag.
+        if (state.panel == EditorPanel.Crop) {
+            CropOverlay(
+                crop = state.geometry.crop,
+                imageBounds = bounds,
+                lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
+                sourceRatio = state.canvasRatio,
+                onCropChanged = onCropChanged,
+                modifier = Modifier.fillMaxSize(),
+            )
+            return@Box
+        }
+
+        // The gesture block outlives recompositions, so these are read through the latest state
+        // rather than captured — otherwise a pan would be mapped against the bounds from before it.
+        val latestBounds by rememberUpdatedState(bounds)
+        val latestHandles by rememberUpdatedState(
+            if (state.canSelect && state.selectionTool == SelectionTool.Lasso) {
+                state.activeMask?.path.orEmpty()
+            } else {
+                emptyList()
+            },
+        )
+        val canSelect = state.canSelect
+        val isLasso = state.selectionTool == SelectionTool.Lasso
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    // A zoomed-in canvas with no way back is a trap.
+                    detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero })
+                }
+                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, isLasso) {
+                    val handleRadius = HANDLE_TOUCH_RADIUS.dp.toPx()
+                    val minStep = 3.dp.toPx()
+
+                    awaitEachGesture {
+                        val first = awaitFirstDown(requireUnconsumed = false)
+                        var transforming = false
+                        var painting = false
+                        var tracing = false
+                        var grabbed = -1
+                        var lastCentroid = first.position
+                        var lastSpan = 0f
+
+                        if (canSelect) {
+                            if (isLasso) {
+                                grabbed = handleAt(latestHandles, first.position, latestBounds, handleRadius)
+                            }
+                            when {
+                                grabbed >= 0 -> touch = first.position
+                                isLasso -> {
+                                    tracing = true
+                                    trace = listOf(first.position)
+                                    touch = first.position
+                                }
+                                else -> {
+                                    painting = true
+                                    touch = first.position
+                                    paintAt(first.position, latestBounds, onPaint)
+                                }
+                            }
+                        }
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.filter { it.pressed }
+                            if (pressed.isEmpty()) break
+
+                            if (pressed.size >= 2) {
+                                if (!transforming) {
+                                    // A second finger makes this a pinch. Abandon what one finger
+                                    // began rather than leaving half a stroke behind — but a brush
+                                    // or a moved point has already changed the mask, so those close
+                                    // their undo step instead of vanishing.
+                                    if (painting || grabbed >= 0) onStrokeEnd()
+                                    trace = emptyList()
+                                    touch = null
+                                    painting = false
+                                    tracing = false
+                                    grabbed = -1
+                                    transforming = true
+                                    lastCentroid = pressed.centroid()
+                                    lastSpan = pressed.spread()
+                                }
+                                val centroid = pressed.centroid()
+                                val spread = pressed.spread()
+                                if (lastSpan > 0f && spread > 0f) {
+                                    val next = (scale * (spread / lastSpan)).coerceIn(1f, MAX_ZOOM)
+                                    // Hold the picture still under the fingers as it grows.
+                                    offset = centroid - centre - (centroid - centre - offset) * (next / scale)
+                                    scale = next
+                                }
+                                offset = clampPan(offset + (centroid - lastCentroid), fitted, scale, stageSize)
+                                lastCentroid = centroid
+                                lastSpan = spread
+                                pressed.forEach { it.consume() }
+                            } else if (!transforming && (painting || tracing || grabbed >= 0)) {
+                                val change = pressed.first()
+                                val position = change.position
+                                touch = position
+                                when {
+                                    grabbed >= 0 -> onMovePoint(grabbed, position.normalizedIn(latestBounds))
+                                    tracing -> {
+                                        val last = trace.lastOrNull()
+                                        if (last == null || (position - last).getDistance() >= minStep) {
+                                            trace = trace + position
+                                        }
+                                    }
+                                    else -> paintAt(position, latestBounds, onPaint)
+                                }
+                                change.consume()
+                            }
+                        }
+
+                        touch = null
+                        when {
+                            transforming -> Unit
+                            grabbed >= 0 || painting -> onStrokeEnd()
+                            tracing -> {
+                                val drawn = trace
+                                trace = emptyList()
+                                onLasso(drawn.map { it.normalizedIn(latestBounds) })
+                            }
+                        }
+                    }
+                },
+        )
     }
 }
 
 /**
- * Draws the boundary of the chosen area, leaving the pixels inside it alone.
+ * Everything drawn over the photo: the boundary of the chosen area, the loop being drawn, the
+ * handles that reshape it, and the magnifier.
  *
- * The line is stroked twice — a dark underlay then a light line over it — so it stays legible
- * against a bright sky and a dark shadow without needing to animate.
+ * One canvas rather than four, because they're all a function of the same transform and drawing
+ * them together is what keeps them from drifting apart.
  */
 @Composable
-private fun SelectionOutline(mask: Mask, imageBounds: Rect, modifier: Modifier = Modifier) {
-    // Mask compares by content, so this only recomputes when the area actually changes.
-    val edges = remember(mask) { MaskOutline.segments(mask) }
-    if (edges.isEmpty()) return
+private fun DrawingLayer(
+    state: PerfectEditUiState,
+    image: ImageBitmap,
+    bounds: Rect,
+    trace: List<Offset>,
+    touch: Offset?,
+    stageSize: IntSize,
+    modifier: Modifier = Modifier,
+) {
+    if (!state.canSelect) return
+    val mask = state.activeMask
+    // Mask compares by content, so the contour is only retraced when the area actually changes.
+    val contour = remember(mask) {
+        if (mask == null || mask.path != null) emptyList() else MaskOutline.segments(mask)
+    }
+    val handles = if (state.selectionTool == SelectionTool.Lasso) mask?.path.orEmpty() else emptyList()
 
     Canvas(modifier = modifier) {
-        if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@Canvas
+        if (bounds.width <= 0f || bounds.height <= 0f) return@Canvas
+
+        fun onScreen(point: MaskPoint) =
+            Offset(bounds.left + point.x * bounds.width, bounds.top + point.y * bounds.height)
+
+        // A mask that still has its polygon is drawn from it directly — exact, with no grid in the
+        // way. Anything brushed or combined falls back to the traced contour.
         val outline = Path()
-        edges.forEach { edge ->
-            outline.moveTo(
-                imageBounds.left + edge.x0 * imageBounds.width,
-                imageBounds.top + edge.y0 * imageBounds.height,
-            )
-            outline.lineTo(
-                imageBounds.left + edge.x1 * imageBounds.width,
-                imageBounds.top + edge.y1 * imageBounds.height,
-            )
+        val path = mask?.path
+        if (path != null && path.size >= 2) {
+            val start = onScreen(path.first())
+            outline.moveTo(start.x, start.y)
+            path.drop(1).forEach { point ->
+                val screen = onScreen(point)
+                outline.lineTo(screen.x, screen.y)
+            }
+            outline.close()
+        } else {
+            contour.forEach { edge ->
+                outline.moveTo(bounds.left + edge.x0 * bounds.width, bounds.top + edge.y0 * bounds.height)
+                outline.lineTo(bounds.left + edge.x1 * bounds.width, bounds.top + edge.y1 * bounds.height)
+            }
         }
         drawPath(outline, color = Color(0xCC000000), style = Stroke(width = 3.dp.toPx()))
         drawPath(outline, color = Color.White, style = Stroke(width = 1.5.dp.toPx()))
-    }
-}
 
-/**
- * Draws a freehand loop and hands back the closed path.
- *
- * Points are converted against [imageBounds] — where the photo actually sits after letterboxing —
- * rather than the composable's own size, so the outline lands under the finger instead of being
- * offset by the empty margins.
- */
-@Composable
-private fun LassoSurface(
-    imageBounds: Rect,
-    onCommit: (List<MaskPoint>) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var path by remember { mutableStateOf(emptyList<Offset>()) }
+        // The loop in progress, with a dashed run back to the start showing how it will close.
+        if (trace.size >= 2) {
+            val live = Path().apply {
+                moveTo(trace.first().x, trace.first().y)
+                trace.drop(1).forEach { lineTo(it.x, it.y) }
+            }
+            drawPath(live, color = Brand, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round))
+            drawLine(
+                color = Color.White,
+                start = trace.last(),
+                end = trace.first(),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
+            )
+        }
 
-    Box(
-        modifier = modifier.pointerInput(imageBounds) {
-            if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@pointerInput
-            // Sampling every touch event would put hundreds of near-identical points in the path
-            // for no extra accuracy; a couple of dp between them is plenty.
-            val minStep = 3.dp.toPx()
-            detectDragGestures(
-                onDragStart = { position -> path = listOf(position) },
-                onDragEnd = {
-                    val drawn = path
-                    path = emptyList()
-                    onCommit(
-                        drawn.map { point ->
-                            MaskPoint(
-                                x = (point.x - imageBounds.left) / imageBounds.width,
-                                y = (point.y - imageBounds.top) / imageBounds.height,
-                            )
-                        },
-                    )
-                },
-                onDragCancel = { path = emptyList() },
-            ) { change, _ ->
-                change.consume()
-                val last = path.lastOrNull()
-                if (last == null || (change.position - last).getDistance() >= minStep) {
-                    path = path + change.position
-                }
-            }
-        },
-    ) {
-        val drawn = path
-        if (drawn.size >= 2) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val outline = Path().apply {
-                    moveTo(drawn.first().x, drawn.first().y)
-                    drawn.drop(1).forEach { lineTo(it.x, it.y) }
-                }
-                drawPath(
-                    path = outline,
-                    color = Brand,
-                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
-                )
-                // The dashed run back to the start shows how the loop will close on release.
-                drawLine(
-                    color = Color.White,
-                    start = drawn.last(),
-                    end = drawn.first(),
-                    strokeWidth = 1.dp.toPx(),
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
-                )
-            }
+        handles.forEach { point ->
+            val screen = onScreen(point)
+            drawCircle(Color(0xCC000000), radius = HANDLE_RADIUS.dp.toPx() + 1.dp.toPx(), center = screen)
+            drawCircle(Color.White, radius = HANDLE_RADIUS.dp.toPx(), center = screen)
+            drawCircle(Brand, radius = HANDLE_RADIUS.dp.toPx() - 2.dp.toPx(), center = screen)
+        }
+
+        touch?.let { position ->
+            drawLoupe(image, bounds, position, stageSize)
         }
     }
 }
 
-/** Turns drags into mask dabs, in the same normalized space the lasso uses. */
-@Composable
-private fun MaskPaintSurface(
-    imageBounds: Rect,
-    onPaint: (Float, Float) -> Unit,
-    onStrokeEnd: () -> Unit,
-    modifier: Modifier = Modifier,
+/**
+ * A magnified circle of the photo around the finger.
+ *
+ * Fixed in a corner rather than following the touch: a loupe that tracks the finger runs off screen
+ * exactly at the edges, which is where the careful work happens. It swaps corners when the finger
+ * strays into the one it is occupying.
+ */
+private fun DrawScope.drawLoupe(
+    image: ImageBitmap,
+    bounds: Rect,
+    touch: Offset,
+    stageSize: IntSize,
 ) {
-    Box(
-        modifier = modifier.pointerInput(imageBounds) {
-            if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@pointerInput
-            fun emit(position: Offset) {
-                val x = (position.x - imageBounds.left) / imageBounds.width
-                val y = (position.y - imageBounds.top) / imageBounds.height
-                if (x in 0f..1f && y in 0f..1f) onPaint(x, y)
-            }
-            detectDragGestures(
-                onDragStart = { position -> emit(position) },
-                onDragEnd = onStrokeEnd,
-                onDragCancel = onStrokeEnd,
-            ) { change, _ ->
-                change.consume()
-                emit(change.position)
-            }
-        },
+    if (bounds.width <= 0f || bounds.height <= 0f || image.width <= 0 || image.height <= 0) return
+    val radius = LOUPE_RADIUS.dp.toPx()
+    val margin = 12.dp.toPx()
+    val placeLeft = touch.x > stageSize.width / 2f
+    val centre = Offset(
+        x = if (placeLeft) margin + radius else stageSize.width - margin - radius,
+        y = margin + radius,
     )
+
+    // The patch of the photo under the finger, in image pixels.
+    val pixelsPerScreen = image.width / bounds.width
+    val half = (radius / LOUPE_MAGNIFICATION * pixelsPerScreen).coerceAtLeast(1f)
+    val u = (touch.x - bounds.left) * pixelsPerScreen
+    val v = (touch.y - bounds.top) * (image.height / bounds.height)
+    val left = (u - half).roundToInt().coerceIn(0, (image.width - 1).coerceAtLeast(0))
+    val top = (v - half).roundToInt().coerceIn(0, (image.height - 1).coerceAtLeast(0))
+    val size = (half * 2).roundToInt().coerceAtLeast(1)
+    val width = size.coerceAtMost(image.width - left)
+    val height = size.coerceAtMost(image.height - top)
+    if (width <= 0 || height <= 0) return
+
+    val circle = Path().apply { addOval(Rect(centre - Offset(radius, radius), centre + Offset(radius, radius))) }
+    clipPath(circle) {
+        drawImage(
+            image = image,
+            srcOffset = IntOffset(left, top),
+            srcSize = IntSize(width, height),
+            dstOffset = IntOffset((centre.x - radius).roundToInt(), (centre.y - radius).roundToInt()),
+            dstSize = IntSize((radius * 2).roundToInt(), (radius * 2).roundToInt()),
+        )
+    }
+    drawCircle(Color(0xCC000000), radius = radius + 1.dp.toPx(), center = centre, style = Stroke(2.dp.toPx()))
+    drawCircle(Color.White, radius = radius, center = centre, style = Stroke(1.dp.toPx()))
+    // Crosshair, so it's clear which point of the photo the loupe is centred on.
+    drawLine(Color.White, centre - Offset(6.dp.toPx(), 0f), centre + Offset(6.dp.toPx(), 0f), 1.dp.toPx())
+    drawLine(Color.White, centre - Offset(0f, 6.dp.toPx()), centre + Offset(0f, 6.dp.toPx()), 1.dp.toPx())
+}
+
+// ---- Stage geometry -----------------------------------------------------------------------------
+
+private fun Rect.scaledAbout(pivot: Offset, factor: Float) = Rect(
+    left = pivot.x + (left - pivot.x) * factor,
+    top = pivot.y + (top - pivot.y) * factor,
+    right = pivot.x + (right - pivot.x) * factor,
+    bottom = pivot.y + (bottom - pivot.y) * factor,
+)
+
+private fun Rect.translated(delta: Offset) =
+    Rect(left + delta.x, top + delta.y, right + delta.x, bottom + delta.y)
+
+/** Keeps a zoomed photo covering the stage, and a fitted one centred. */
+private fun clampPan(offset: Offset, fitted: Rect, scale: Float, stage: IntSize): Offset {
+    val maxX = ((fitted.width * scale - stage.width) / 2f).coerceAtLeast(0f)
+    val maxY = ((fitted.height * scale - stage.height) / 2f).coerceAtLeast(0f)
+    return Offset(offset.x.coerceIn(-maxX, maxX), offset.y.coerceIn(-maxY, maxY))
+}
+
+private fun Offset.normalizedIn(bounds: Rect): MaskPoint =
+    if (bounds.width <= 0f || bounds.height <= 0f) {
+        MaskPoint(0f, 0f)
+    } else {
+        MaskPoint((x - bounds.left) / bounds.width, (y - bounds.top) / bounds.height)
+    }
+
+private fun paintAt(position: Offset, bounds: Rect, onPaint: (Float, Float) -> Unit) {
+    val point = position.normalizedIn(bounds)
+    if (point.x in 0f..1f && point.y in 0f..1f) onPaint(point.x, point.y)
+}
+
+/** The index of the handle [position] grabbed, or -1. */
+private fun handleAt(path: List<MaskPoint>, position: Offset, bounds: Rect, radius: Float): Int {
+    if (path.isEmpty() || bounds.width <= 0f || bounds.height <= 0f) return -1
+    var best = -1
+    var bestDistance = radius
+    path.forEachIndexed { index, point ->
+        val screen = Offset(bounds.left + point.x * bounds.width, bounds.top + point.y * bounds.height)
+        val distance = (position - screen).getDistance()
+        if (distance <= bestDistance) {
+            bestDistance = distance
+            best = index
+        }
+    }
+    return best
+}
+
+private fun List<PointerInputChange>.centroid(): Offset {
+    if (isEmpty()) return Offset.Zero
+    var sum = Offset.Zero
+    forEach { sum += it.position }
+    return sum / size.toFloat()
+}
+
+/** Mean distance of the pointers from their centroid — the thing a pinch changes. */
+private fun List<PointerInputChange>.spread(): Float {
+    if (size < 2) return 0f
+    val middle = centroid()
+    var total = 0f
+    forEach { total += (it.position - middle).getDistance() }
+    return total / size
 }
 
 /** Where a Fit-scaled image of [imageWidth] x [imageHeight] lands inside the container. */
@@ -760,7 +988,14 @@ private fun SelectionChips(
     }
 }
 
-/** The stack itself: add on the left, then a chip per layer, newest on top first. */
+/**
+ * The stack, said out loud: the word "Layers", a button that names what it does, then a chip per
+ * layer with the newest on top.
+ *
+ * Every effect has been its own layer with its own area since the layer engine landed. A sparkle
+ * icon and unlabelled chips just never said so, which made a capability that already existed look
+ * like one that didn't.
+ */
 @Composable
 private fun LayerRow(
     state: PerfectEditUiState,
@@ -771,11 +1006,10 @@ private fun LayerRow(
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        IconButton(onClick = onAdd, modifier = Modifier.size(40.dp)) {
-            Icon(Icons.Filled.AutoAwesome, contentDescription = "Add an effect", tint = Brand)
-        }
+        Text(text = "Layers", color = Color(0xAAFFFFFF), fontSize = 10.sp)
+        PanelChip(label = "+ New", isSelected = true, onClick = onAdd)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(state.document.topDown, key = { it.id }) { layer ->
                 LayerChip(

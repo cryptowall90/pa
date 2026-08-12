@@ -386,10 +386,17 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         val state = _state.value
         // No pending selection means no mask, which renders as "applies to the whole photo".
         val mask = state.pendingSelection ?: Mask()
+        // Numbered, so two layers of the same kind can be told apart in the row.
+        val ordinal = state.document.layers.size + 1
         val document = when (kind) {
             // Not neutral: a fresh layer must visibly do something, or adding it looks like a no-op.
             EffectKind.Tone -> state.document.add {
-                Layer.Tone(it, adjustments = ToneAdjustments(shadows = 25), mask = mask)
+                Layer.Tone(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    adjustments = ToneAdjustments(shadows = 25),
+                    mask = mask,
+                )
             }
         }
         _state.update { it.copy(pendingSelection = null, control = LayerControl.Shadows) }
@@ -512,6 +519,29 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             erase = mode == SelectionMode.Subtract,
         )
         applySelection(state, layer, painted, record = false)
+    }
+
+    /**
+     * Drags one point of a lasso and refills the area from the whole polygon.
+     *
+     * The moved path is written back verbatim rather than letting the fill re-simplify it — a point
+     * dragged into line with its neighbours would otherwise be dropped mid-drag, taking the handle
+     * out from under the finger holding it.
+     */
+    fun onMovePathPoint(index: Int, point: MaskPoint) {
+        val state = _state.value
+        val layer = state.document.selected
+        val current = if (layer != null) layer.mask.takeUnless { it.isEmpty } else state.pendingSelection
+        val path = current?.path ?: return
+        if (index !in path.indices) return
+
+        val moved = path.toMutableList().also { it[index] = point }
+        val refilled = MaskLasso.fill(
+            mask = Mask.forRatio(state.canvasRatio).copy(feather = current.feather),
+            path = moved,
+            mode = SelectionMode.Replace,
+        )
+        applySelection(state, layer, refilled.copy(path = moved), record = false)
     }
 
     fun endStroke() = commit(_state.value.document)
