@@ -18,11 +18,14 @@ import com.pictureperfectx.app.capture.ToneBand
 import com.pictureperfectx.app.data.PhotoEntity
 import com.pictureperfectx.app.layers.BlendMode
 import com.pictureperfectx.app.layers.Document
+import com.pictureperfectx.app.layers.GradientSpec
+import com.pictureperfectx.app.layers.GradientStyle
 import com.pictureperfectx.app.layers.History
 import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.LayerRenderer
 import com.pictureperfectx.app.layers.Mask
 import com.pictureperfectx.app.layers.MaskBrush
+import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskLasso
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
@@ -55,8 +58,12 @@ enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
 }
 
-/** How an area is chosen: drawn round in one go, or painted in by hand. */
-enum class SelectionTool(val label: String) { Lasso("Lasso"), Brush("Brush") }
+/** How an area is chosen: drawn round, painted in by hand, or faded across the frame. */
+enum class SelectionTool(val label: String) {
+    Lasso("Lasso"),
+    Brush("Brush"),
+    Gradient("Gradient"),
+}
 
 /**
  * The one property the effects panel's single slider is editing, picked from a row of chips.
@@ -72,6 +79,7 @@ enum class LayerControl(val label: String) {
     Blur("Blur"),
     Opacity("Opacity"),
     Feather("Feather"),
+    Falloff("Falloff"),
     BrushSize("Brush size");
 
     /** The tonal band this control edits, for the four that are one. */
@@ -95,6 +103,8 @@ enum class LayerControl(val label: String) {
             add(Opacity)
             // Feathering an area that doesn't exist is a slider that does nothing.
             if (!layer.mask.isEmpty) add(Feather)
+            // Falloff belongs to a gradient, so it only appears when there is one to shape.
+            if (layer.mask.gradient != null) add(Falloff)
             if (tool == SelectionTool.Brush) add(BrushSize)
         }
     }
@@ -111,6 +121,8 @@ data class PerfectEditUiState(
     val control: LayerControl = LayerControl.Shadows,
     val selectionTool: SelectionTool = SelectionTool.Lasso,
     val selectionMode: SelectionMode = SelectionMode.Replace,
+    /** The shape the next gradient will be drawn in. */
+    val gradientStyle: GradientStyle = GradientStyle.Linear,
     /**
      * An area drawn before any effect was chosen. The next effect added takes it as its mask, which
      * is the draw-then-adjust order selections are normally used in.
@@ -162,6 +174,9 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     // the rotate/crop work each frame.
     private var orientedPreview: Bitmap? = null
     private var renderJob: Job? = null
+
+    // What the live area looked like when a gradient drag began; see onGradientStart.
+    private var gradientBase: Mask? = null
 
     // Undo holds whole documents; a Document stores descriptions rather than pixels, so snapshots
     // are cheap enough for that to be the simplest correct approach.
@@ -485,6 +500,82 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applySelection(state, layer, feathered, record = false)
     }
 
+    fun onSelectGradientStyle(style: GradientStyle) {
+        _state.update { it.copy(gradientStyle = style) }
+        // Restyling an existing gradient in place is the point of the chips; redrawing to change
+        // shape would throw away a placement that was probably already right.
+        _state.value.activeMask?.gradient?.let { current ->
+            if (current.style != style) placeGradient(current.copy(style = style), record = true)
+        }
+    }
+
+    /**
+     * Marks the start of a gradient drag, remembering what the area looked like beforehand.
+     *
+     * Every frame of the drag combines against *this*, not against the frame before it. Adding a
+     * gradient onto the running result instead would ratchet coverage upwards until the whole photo
+     * was selected, because a gradient covers the entire frame by definition.
+     */
+    fun onGradientStart() {
+        val state = _state.value
+        gradientBase = if (state.document.selected != null) {
+            state.document.selected?.mask?.takeUnless { it.isEmpty }
+        } else {
+            state.pendingSelection
+        }
+    }
+
+    /** A gradient dragged from [start] to [end], both normalized. */
+    fun onGradientDrawn(start: MaskPoint, end: MaskPoint) {
+        val state = _state.value
+        val layer = state.document.selected
+        val base = gradientBase
+        val spec = GradientSpec(
+            style = state.gradientStyle,
+            start = start,
+            end = end,
+            // Re-dragging keeps the falloff already dialled in.
+            midpoint = base?.gradient?.midpoint ?: 0.5f,
+        )
+        val mode = state.selectionMode
+        val onto = if (mode == SelectionMode.Replace || base == null) {
+            Mask.forRatio(state.canvasRatio).copy(feather = base?.feather ?: Mask.SELECTION_FEATHER)
+        } else {
+            base
+        }
+        applySelection(state, layer, MaskGradient.fill(onto, spec, mode), record = false)
+    }
+
+    /** The falloff slider: where along the run the gradient reaches halfway. */
+    fun onFalloff(value: Float) {
+        val current = _state.value.activeMask?.gradient ?: return
+        placeGradient(
+            current.copy(midpoint = value.coerceIn(MaskGradient.MIN_MIDPOINT, MaskGradient.MAX_MIDPOINT)),
+            record = false,
+        )
+    }
+
+    /**
+     * Re-places a gradient that *is* the whole area.
+     *
+     * Restyling and falloff are only offered when the mask kept its spec, which only happens on a
+     * `Replace` — a gradient combined into something else leaves a shape it no longer describes, so
+     * there's nothing to re-place. That's why starting from a fresh grid here is right rather than
+     * lossy.
+     */
+    private fun placeGradient(spec: GradientSpec, record: Boolean) {
+        val state = _state.value
+        val layer = state.document.selected
+        val current = if (layer != null) layer.mask.takeUnless { it.isEmpty } else state.pendingSelection
+        val filled = MaskGradient.fill(
+            mask = Mask.forRatio(state.canvasRatio)
+                .copy(feather = current?.feather ?: Mask.SELECTION_FEATHER),
+            spec = spec,
+            mode = SelectionMode.Replace,
+        )
+        applySelection(state, layer, filled, record = record)
+    }
+
     /** A finished lasso, as normalized points. One drawn shape is one undo step. */
     fun onLassoCommitted(path: List<MaskPoint>) {
         if (path.size < 3) return
@@ -528,7 +619,21 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * dragged into line with its neighbours would otherwise be dropped mid-drag, taking the handle
      * out from under the finger holding it.
      */
-    fun onMovePathPoint(index: Int, point: MaskPoint) {
+    fun onMoveHandle(index: Int, point: MaskPoint) {
+        val current = _state.value.activeMask ?: return
+        val gradient = current.gradient
+        if (gradient != null) {
+            // Two handles: the strong end and the far end. Moving either rotates and stretches it.
+            placeGradient(
+                if (index == 0) gradient.copy(start = point) else gradient.copy(end = point),
+                record = false,
+            )
+            return
+        }
+        onMovePathPoint(index, point)
+    }
+
+    private fun onMovePathPoint(index: Int, point: MaskPoint) {
         val state = _state.value
         val layer = state.document.selected
         val current = if (layer != null) layer.mask.takeUnless { it.isEmpty } else state.pendingSelection

@@ -89,7 +89,9 @@ import com.pictureperfectx.app.capture.AspectRatio
 import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.layers.Layer
+import com.pictureperfectx.app.layers.GradientStyle
 import com.pictureperfectx.app.layers.Mask
+import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskOutline
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
@@ -151,7 +153,9 @@ fun PerfectEditorScreen(
                 onPaint = viewModel::onPaintMask,
                 onStrokeEnd = viewModel::endStroke,
                 onLasso = viewModel::onLassoCommitted,
-                onMovePoint = viewModel::onMovePathPoint,
+                onMovePoint = viewModel::onMoveHandle,
+                onGradientStart = viewModel::onGradientStart,
+                onGradient = viewModel::onGradientDrawn,
                 modifier = Modifier.weight(1f).fillMaxWidth().statusBarsPadding(),
             )
 
@@ -374,6 +378,8 @@ private fun EditorStage(
     onStrokeEnd: () -> Unit,
     onLasso: (List<MaskPoint>) -> Unit,
     onMovePoint: (Int, MaskPoint) -> Unit,
+    onGradientStart: () -> Unit,
+    onGradient: (MaskPoint, MaskPoint) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
@@ -477,15 +483,9 @@ private fun EditorStage(
         // The gesture block outlives recompositions, so these are read through the latest state
         // rather than captured — otherwise a pan would be mapped against the bounds from before it.
         val latestBounds by rememberUpdatedState(bounds)
-        val latestHandles by rememberUpdatedState(
-            if (state.canSelect && state.selectionTool == SelectionTool.Lasso) {
-                state.activeMask?.path.orEmpty()
-            } else {
-                emptyList()
-            },
-        )
+        val latestHandles by rememberUpdatedState(handlesOf(state))
         val canSelect = state.canSelect
-        val isLasso = state.selectionTool == SelectionTool.Lasso
+        val tool = state.selectionTool
 
         Box(
             modifier = Modifier
@@ -494,7 +494,7 @@ private fun EditorStage(
                     // A zoomed-in canvas with no way back is a trap.
                     detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero })
                 }
-                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, isLasso) {
+                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, tool) {
                     val handleRadius = HANDLE_TOUCH_RADIUS.dp.toPx()
                     val minStep = 3.dp.toPx()
 
@@ -503,24 +503,30 @@ private fun EditorStage(
                         var transforming = false
                         var painting = false
                         var tracing = false
+                        var sweeping = false
+                        var gradientStart = MaskPoint(0f, 0f)
                         var grabbed = -1
                         var lastCentroid = first.position
                         var lastSpan = 0f
 
                         if (canSelect) {
-                            if (isLasso) {
+                            if (tool != SelectionTool.Brush) {
                                 grabbed = handleAt(latestHandles, first.position, latestBounds, handleRadius)
                             }
+                            touch = first.position
                             when {
-                                grabbed >= 0 -> touch = first.position
-                                isLasso -> {
+                                grabbed >= 0 -> Unit
+                                tool == SelectionTool.Lasso -> {
                                     tracing = true
                                     trace = listOf(first.position)
-                                    touch = first.position
+                                }
+                                tool == SelectionTool.Gradient -> {
+                                    sweeping = true
+                                    gradientStart = first.position.normalizedIn(latestBounds)
+                                    onGradientStart()
                                 }
                                 else -> {
                                     painting = true
-                                    touch = first.position
                                     paintAt(first.position, latestBounds, onPaint)
                                 }
                             }
@@ -537,11 +543,12 @@ private fun EditorStage(
                                     // began rather than leaving half a stroke behind — but a brush
                                     // or a moved point has already changed the mask, so those close
                                     // their undo step instead of vanishing.
-                                    if (painting || grabbed >= 0) onStrokeEnd()
+                                    if (painting || sweeping || grabbed >= 0) onStrokeEnd()
                                     trace = emptyList()
                                     touch = null
                                     painting = false
                                     tracing = false
+                                    sweeping = false
                                     grabbed = -1
                                     transforming = true
                                     lastCentroid = pressed.centroid()
@@ -559,7 +566,7 @@ private fun EditorStage(
                                 lastCentroid = centroid
                                 lastSpan = spread
                                 pressed.forEach { it.consume() }
-                            } else if (!transforming && (painting || tracing || grabbed >= 0)) {
+                            } else if (!transforming && (painting || tracing || sweeping || grabbed >= 0)) {
                                 val change = pressed.first()
                                 val position = change.position
                                 touch = position
@@ -571,6 +578,7 @@ private fun EditorStage(
                                             trace = trace + position
                                         }
                                     }
+                                    sweeping -> onGradient(gradientStart, position.normalizedIn(latestBounds))
                                     else -> paintAt(position, latestBounds, onPaint)
                                 }
                                 change.consume()
@@ -580,7 +588,7 @@ private fun EditorStage(
                         touch = null
                         when {
                             transforming -> Unit
-                            grabbed >= 0 || painting -> onStrokeEnd()
+                            grabbed >= 0 || painting || sweeping -> onStrokeEnd()
                             tracing -> {
                                 val drawn = trace
                                 trace = emptyList()
@@ -616,7 +624,8 @@ private fun DrawingLayer(
     val contour = remember(mask) {
         if (mask == null || mask.path != null) emptyList() else MaskOutline.segments(mask)
     }
-    val handles = if (state.selectionTool == SelectionTool.Lasso) mask?.path.orEmpty() else emptyList()
+    val handles = handlesOf(state)
+    val gradient = mask?.gradient
 
     Canvas(modifier = modifier) {
         if (bounds.width <= 0f || bounds.height <= 0f) return@Canvas
@@ -658,6 +667,21 @@ private fun DrawingLayer(
                 end = trace.first(),
                 strokeWidth = 1.dp.toPx(),
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f)),
+            )
+        }
+
+        // A gradient's contour is only its halfway line, which says nothing about which way it
+        // runs. The axis does.
+        if (gradient != null) {
+            val from = onScreen(gradient.start)
+            val to = onScreen(gradient.end)
+            drawLine(Color(0xCC000000), from, to, 3.dp.toPx())
+            drawLine(
+                color = Brand,
+                start = from,
+                end = to,
+                strokeWidth = 1.5.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 6f)),
             )
         }
 
@@ -756,6 +780,17 @@ private fun paintAt(position: Offset, bounds: Rect, onPaint: (Float, Float) -> U
     if (point.x in 0f..1f && point.y in 0f..1f) onPaint(point.x, point.y)
 }
 
+/**
+ * The draggable points of whatever describes the active area: a lasso's simplified vertices, or a
+ * gradient's strong and far ends. A brushed area has neither, since no shape describes it.
+ */
+private fun handlesOf(state: PerfectEditUiState): List<MaskPoint> {
+    if (!state.canSelect || state.selectionTool == SelectionTool.Brush) return emptyList()
+    val mask = state.activeMask ?: return emptyList()
+    mask.gradient?.let { return listOf(it.start, it.end) }
+    return mask.path.orEmpty()
+}
+
 /** The index of the handle [position] grabbed, or -1. */
 private fun handleAt(path: List<MaskPoint>, position: Offset, bounds: Rect, radius: Float): Int {
     if (path.isEmpty() || bounds.width <= 0f || bounds.height <= 0f) return -1
@@ -841,6 +876,22 @@ private fun EffectsControls(
         )
     }
 
+    // Only while the gradient tool is in hand — five more chips permanently on screen would undo
+    // the height the photo was given.
+    if (state.selectionTool == SelectionTool.Gradient) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(GradientStyle.entries.toList(), key = { it.name }) { style ->
+                PanelChip(label = style.label, isSelected = style == state.gradientStyle) {
+                    viewModel.onSelectGradientStyle(style)
+                }
+            }
+        }
+    }
+
     if (addingEffect) {
         EffectPickerRow(
             onPick = { kind ->
@@ -873,7 +924,11 @@ private fun EffectsControls(
         }
         Text(
             text = if (state.pendingSelection == null) {
-                "Draw around an area, then add an effect to apply it only there."
+                if (state.selectionTool == SelectionTool.Gradient) {
+                    "Drag across the photo, then add an effect to fade it in along the gradient."
+                } else {
+                    "Draw around an area, then add an effect to apply it only there."
+                }
             } else {
                 "Area ready — add an effect and it applies only there."
             },
@@ -930,6 +985,17 @@ private fun ControlSlider(
             onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
             onChangeFinished = viewModel::commitLayerEdit,
         )
+
+        control == LayerControl.Falloff -> {
+            val midpoint = state.activeMask?.gradient?.midpoint ?: 0.5f
+            ValueSlider(
+                value = midpoint,
+                range = MaskGradient.MIN_MIDPOINT..MaskGradient.MAX_MIDPOINT,
+                readout = "${(midpoint * 100).roundToInt()}",
+                onChange = viewModel::onFalloff,
+                onChangeFinished = viewModel::commitLayerEdit,
+            )
+        }
 
         control == LayerControl.BrushSize -> ValueSlider(
             value = state.brushRadius,
