@@ -76,11 +76,16 @@ enum class SelectionTool(val label: String) {
  * One slider at a time is what keeps the controls to a couple of short rows — and the controls
  * short is what keeps them from eating the photo they're meant to be adjusting.
  */
-enum class LayerControl(val label: String) {
-    Blacks("Blacks"),
-    Shadows("Shadows"),
-    Highlights("Highlights"),
-    Whites("Whites"),
+enum class LayerControl(val label: String, val band: ToneBand? = null) {
+    ToneExposure(ToneBand.Exposure.label, ToneBand.Exposure),
+    ToneContrast(ToneBand.Contrast.label, ToneBand.Contrast),
+    ToneBlacks(ToneBand.Blacks.label, ToneBand.Blacks),
+    ToneShadows(ToneBand.Shadows.label, ToneBand.Shadows),
+    ToneHighlights(ToneBand.Highlights.label, ToneBand.Highlights),
+    ToneWhites(ToneBand.Whites.label, ToneBand.Whites),
+    ToneSaturation(ToneBand.Saturation.label, ToneBand.Saturation),
+    ToneVibrance(ToneBand.Vibrance.label, ToneBand.Vibrance),
+    ToneWarmth(ToneBand.Warmth.label, ToneBand.Warmth),
     Blur("Blur"),
     Intensity("Strength"),
     Opacity("Opacity"),
@@ -90,21 +95,13 @@ enum class LayerControl(val label: String) {
     ColourTo("To"),
     BrushSize("Brush size");
 
-    /** The tonal band this control edits, for the four that are one. */
-    val band: ToneBand?
-        get() = when (this) {
-            Blacks -> ToneBand.Blacks
-            Shadows -> ToneBand.Shadows
-            Highlights -> ToneBand.Highlights
-            Whites -> ToneBand.Whites
-            else -> null
-        }
-
     companion object {
         /** What [layer] offers, plus brush size when the brush is what's in hand. */
         fun forLayer(layer: Layer, tool: SelectionTool): List<LayerControl> = buildList {
             when (layer) {
-                is Layer.Tone -> { add(Blacks); add(Shadows); add(Highlights); add(Whites) }
+                // Declaration order is the chip order, and taking the list straight from the enum
+                // means a band added to ToneAdjustments can't be left without a control.
+                is Layer.Tone -> addAll(entries.filter { it.band != null })
                 is Layer.Blur -> add(Blur)
                 is Layer.Gradient -> { add(ColourFrom); add(ColourTo); add(Falloff) }
                 is Layer.Look -> add(Intensity)
@@ -128,7 +125,7 @@ data class PerfectEditUiState(
     val document: Document = Document(),
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
-    val control: LayerControl = LayerControl.Shadows,
+    val control: LayerControl = LayerControl.ToneShadows,
     val selectionTool: SelectionTool = SelectionTool.Lasso,
     val selectionMode: SelectionMode = SelectionMode.Replace,
     /** The shape the next gradient will be drawn in. */
@@ -459,7 +456,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         val control = when (kind) {
             EffectKind.Gradient -> LayerControl.ColourFrom
             EffectKind.Look -> LayerControl.Intensity
-            EffectKind.Tone -> LayerControl.Shadows
+            EffectKind.Tone -> LayerControl.ToneShadows
         }
         _state.update { it.copy(pendingSelection = null, control = control) }
         commit(document)

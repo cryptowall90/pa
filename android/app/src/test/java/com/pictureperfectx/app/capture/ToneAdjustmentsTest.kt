@@ -1,5 +1,6 @@
 package com.pictureperfectx.app.capture
 
+import com.pictureperfectx.app.ui.perfect.LayerControl
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,10 +66,37 @@ class ToneAdjustmentsTest {
     }
 
     @Test
-    fun `bands are ordered dark to light`() {
+    fun `bands run in the order a photograph is worked`() {
+        // Also the order the shader applies them in: overall exposure and contrast, then dark to
+        // light, then colour. A control that reads third and applies first behaves oddly.
         assertEquals(
-            listOf(ToneBand.Blacks, ToneBand.Shadows, ToneBand.Highlights, ToneBand.Whites),
+            listOf(
+                ToneBand.Exposure,
+                ToneBand.Contrast,
+                ToneBand.Blacks,
+                ToneBand.Shadows,
+                ToneBand.Highlights,
+                ToneBand.Whites,
+                ToneBand.Saturation,
+                ToneBand.Vibrance,
+                ToneBand.Warmth,
+            ),
             ToneBand.entries.toList(),
         )
+    }
+
+    @Test
+    fun `every band is reachable from a control`() {
+        // LayerControl and ToneBand are two lists that have to agree. A band added to the shader
+        // but not to the chips would be a slider nobody can reach, and nothing else would fail.
+        val reachable = LayerControl.entries.mapNotNull { it.band }
+        assertEquals(ToneBand.entries.toList(), reachable)
+    }
+
+    @Test
+    fun `each control carries its band's own label`() {
+        LayerControl.entries.forEach { control ->
+            control.band?.let { assertEquals(it.label, control.label) }
+        }
     }
 }
