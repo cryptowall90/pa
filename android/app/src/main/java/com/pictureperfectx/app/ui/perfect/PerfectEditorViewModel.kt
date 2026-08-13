@@ -17,6 +17,7 @@ import com.pictureperfectx.app.capture.ToneAdjustments
 import com.pictureperfectx.app.capture.ToneBand
 import com.pictureperfectx.app.data.PhotoEntity
 import com.pictureperfectx.app.layers.BlendMode
+import com.pictureperfectx.app.layers.ColourTone
 import com.pictureperfectx.app.layers.Document
 import com.pictureperfectx.app.layers.GradientSpec
 import com.pictureperfectx.app.layers.GradientStyle
@@ -56,6 +57,7 @@ enum class EditorPanel(val label: String) {
 /** An effect the user can add, as offered by the effects picker. */
 enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
+    Gradient("Gradient", "A wash of colour across the photo."),
 }
 
 /** How an area is chosen: drawn round, painted in by hand, or faded across the frame. */
@@ -80,6 +82,8 @@ enum class LayerControl(val label: String) {
     Opacity("Opacity"),
     Feather("Feather"),
     Falloff("Falloff"),
+    ColourFrom("From"),
+    ColourTo("To"),
     BrushSize("Brush size");
 
     /** The tonal band this control edits, for the four that are one. */
@@ -98,13 +102,15 @@ enum class LayerControl(val label: String) {
             when (layer) {
                 is Layer.Tone -> { add(Blacks); add(Shadows); add(Highlights); add(Whites) }
                 is Layer.Blur -> add(Blur)
+                is Layer.Gradient -> { add(ColourFrom); add(ColourTo); add(Falloff) }
                 is Layer.Look -> Unit
             }
             add(Opacity)
             // Feathering an area that doesn't exist is a slider that does nothing.
             if (!layer.mask.isEmpty) add(Feather)
-            // Falloff belongs to a gradient, so it only appears when there is one to shape.
-            if (layer.mask.gradient != null) add(Falloff)
+            // Falloff belongs to a gradient, so it only appears when there is one to shape. A
+            // gradient layer has its own and offered it above.
+            if (layer.mask.gradient != null && layer !is Layer.Gradient) add(Falloff)
             if (tool == SelectionTool.Brush) add(BrushSize)
         }
     }
@@ -413,8 +419,21 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                     mask = mask,
                 )
             }
+
+            EffectKind.Gradient -> state.document.add {
+                Layer.Gradient(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    // Top-down and fading out: a sunset wash, the commonest thing this is for, and
+                    // visible the moment it is added rather than needing to be placed first.
+                    spec = GradientSpec(start = MaskPoint(0.5f, 0f), end = MaskPoint(0.5f, 0.7f)),
+                    blend = BlendMode.Multiply,
+                    mask = mask,
+                )
+            }
         }
-        _state.update { it.copy(pendingSelection = null, control = LayerControl.Shadows) }
+        val control = if (kind == EffectKind.Gradient) LayerControl.ColourFrom else LayerControl.Shadows
+        _state.update { it.copy(pendingSelection = null, control = control) }
         commit(document)
     }
 
@@ -467,6 +486,29 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onLayerBlurRadius(id: Long, radius: Int) {
         val document = _state.value.document.update(id) { layer ->
             if (layer is Layer.Blur) layer.copy(radius = radius.coerceIn(1, 60)) else layer
+        }
+        applyDocument(document, record = false)
+    }
+
+    /** The hue at one end of a gradient layer's wash. */
+    fun onGradientHue(id: Long, atStart: Boolean, hue: Float) = updateGradientLayer(id) { layer ->
+        val colour = (if (atStart) layer.from else layer.to).copy(hue = hue.coerceIn(0f, 360f))
+        if (atStart) layer.copy(from = colour) else layer.copy(to = colour)
+    }
+
+    /** Black, white, clear or a colour, at one end of a gradient layer's wash. */
+    fun onGradientTone(id: Long, atStart: Boolean, tone: ColourTone) = updateGradientLayer(id) { layer ->
+        val colour = (if (atStart) layer.from else layer.to).copy(tone = tone)
+        if (atStart) layer.copy(from = colour) else layer.copy(to = colour)
+    }
+
+    /** How a gradient layer's own wash is placed, as opposed to the area any layer applies through. */
+    fun onGradientLayerSpec(id: Long, transform: (GradientSpec) -> GradientSpec) =
+        updateGradientLayer(id) { it.copy(spec = transform(it.spec)) }
+
+    private fun updateGradientLayer(id: Long, transform: (Layer.Gradient) -> Layer.Gradient) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Gradient) transform(layer) else layer
         }
         applyDocument(document, record = false)
     }

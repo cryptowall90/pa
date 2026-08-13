@@ -35,6 +35,9 @@ object LayerRenderer {
     /** The size the defocus is computed at, whatever the photo's own resolution. */
     private const val BLUR_WORKING_EDGE = 1280
 
+    /** A colour gradient is a smooth ramp, so it is generated small and scaled up. */
+    private const val GRADIENT_WORKING_EDGE = 512
+
     fun render(context: Context, base: Bitmap, document: Document): Bitmap {
         val layers = document.renderable()
         if (layers.isEmpty()) return base
@@ -72,6 +75,62 @@ object LayerRenderer {
         }
 
         is Layer.Blur -> bokeh(context, source, layer.radius)
+
+        is Layer.Gradient -> gradient(source, layer)
+    }
+
+    /**
+     * Renders a colour gradient at [source]'s size.
+     *
+     * Built from [MaskGradient.coverage], not from Android's `LinearGradient` and friends. Those
+     * would cover three of the five styles and leave Diamond with no equivalent, so the fill would
+     * have to be written twice — and the two halves would drift, which is exactly the bug that ends
+     * with a colour gradient and a masked one placed identically not lining up.
+     *
+     * Generated at a modest size and scaled up: it is a smooth ramp, so there is nothing to lose.
+     */
+    private fun gradient(source: Bitmap, layer: Layer.Gradient): Bitmap {
+        val longEdge = maxOf(source.width, source.height).coerceAtLeast(1)
+        val scale = if (longEdge > GRADIENT_WORKING_EDGE) {
+            GRADIENT_WORKING_EDGE.toFloat() / longEdge
+        } else {
+            1f
+        }
+        val width = (source.width * scale).toInt().coerceAtLeast(1)
+        val height = (source.height * scale).toInt().coerceAtLeast(1)
+
+        val from = layer.from.toArgb()
+        val to = layer.to.toArgb()
+        val pixels = IntArray(width * height) { index ->
+            val column = index % width
+            val row = index / width
+            val t = MaskGradient.coverage(
+                spec = layer.spec,
+                x = (column + 0.5f) / width,
+                y = (row + 0.5f) / height,
+                columns = width,
+                rows = height,
+            )
+            // Coverage is 1 at the gradient's start, which is where `from` belongs.
+            blend(to, from, t)
+        }
+
+        val small = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+        if (width == source.width && height == source.height) return small
+        val full = Bitmap.createScaledBitmap(small, source.width, source.height, true)
+        if (full !== small && !small.isRecycled) small.recycle()
+        return full
+    }
+
+    /** Straight interpolation in premultiplied-free ARGB; a wash needs nothing cleverer. */
+    private fun blend(start: Int, end: Int, t: Float): Int {
+        val amount = t.coerceIn(0f, 1f)
+        fun channel(shift: Int): Int {
+            val a = (start shr shift) and 0xFF
+            val b = (end shr shift) and 0xFF
+            return (a + (b - a) * amount).roundToInt().coerceIn(0, 255) shl shift
+        }
+        return channel(24) or channel(16) or channel(8) or channel(0)
     }
 
     /**

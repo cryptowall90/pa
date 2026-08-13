@@ -237,6 +237,51 @@ sealed interface Layer {
         override val mask: Mask = Mask(),
         val radius: Int = 25,
     ) : Layer
+
+    /**
+     * A wash of colour running from [from] to [to] across the frame.
+     *
+     * The gradient it is drawn from is the same [GradientSpec] a mask uses, rendered through the
+     * same coverage function — so a colour gradient and a masked one placed identically line up
+     * exactly, rather than nearly.
+     */
+    data class Gradient(
+        override val id: Long,
+        override val name: String = "Gradient",
+        override val isVisible: Boolean = true,
+        override val opacity: Float = 1f,
+        override val blend: BlendMode = BlendMode.Normal,
+        override val mask: Mask = Mask(),
+        val spec: GradientSpec = GradientSpec(),
+        val from: GradientColour = GradientColour(hue = 20f),
+        val to: GradientColour = GradientColour(tone = ColourTone.Clear),
+    ) : Layer
+}
+
+/**
+ * One end of a colour gradient.
+ *
+ * A hue with a lightness shortcut rather than an arbitrary colour: it needs no picker widget, which
+ * nothing else in the app has, and drives the same one-slider-and-chips pattern as every other
+ * control. [alpha] of 0 is what makes a gradient fade into the photo rather than over it.
+ */
+data class GradientColour(
+    /** 0..360 around the wheel. Ignored unless [tone] is [ColourTone.Hue]. */
+    val hue: Float = 20f,
+    val tone: ColourTone = ColourTone.Hue,
+)
+
+/**
+ * The shortcuts worth having without a colour picker.
+ *
+ * Black and white are most of what a gradient wash is actually used for, and [Clear] is what lets a
+ * gradient fade *into* the photo rather than sitting over all of it.
+ */
+enum class ColourTone(val label: String) {
+    Hue("Colour"),
+    Black("Black"),
+    White("White"),
+    Clear("Clear"),
 }
 
 /** Copies a layer with new common properties, preserving its specific type and payload. */
@@ -250,4 +295,35 @@ fun Layer.withCommon(
     is Layer.Tone -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Look -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Blur -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Gradient -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+}
+
+/**
+ * The colour this end of a gradient contributes, as packed ARGB.
+ *
+ * A saturated hue at mid lightness reads as a wash rather than a stain, which is what a gradient
+ * over a photo is for; black and white skip the wheel entirely.
+ */
+fun GradientColour.toArgb(): Int = when (tone) {
+    // Clear keeps the colour it fades from, so the ramp loses opacity without drifting through grey.
+    ColourTone.Clear -> hueToRgb(hue)
+    ColourTone.Black -> 0xFF000000.toInt()
+    ColourTone.White -> 0xFFFFFFFF.toInt()
+    ColourTone.Hue -> 0xFF000000.toInt() or hueToRgb(hue)
+}
+
+/** A fully saturated colour at the given angle round the wheel, 0..360. */
+private fun hueToRgb(hue: Float): Int {
+    val h = ((hue % 360f) + 360f) % 360f / 60f
+    val x = 1f - kotlin.math.abs(h % 2f - 1f)
+    val (r, g, b) = when (h.toInt()) {
+        0 -> Triple(1f, x, 0f)
+        1 -> Triple(x, 1f, 0f)
+        2 -> Triple(0f, 1f, x)
+        3 -> Triple(0f, x, 1f)
+        4 -> Triple(x, 0f, 1f)
+        else -> Triple(1f, 0f, x)
+    }
+    fun channel(value: Float) = (value * 255).roundToInt().coerceIn(0, 255)
+    return (channel(r) shl 16) or (channel(g) shl 8) or channel(b)
 }

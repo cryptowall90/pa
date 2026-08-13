@@ -88,8 +88,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.capture.AspectRatio
 import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
-import com.pictureperfectx.app.layers.Layer
+import com.pictureperfectx.app.layers.ColourTone
 import com.pictureperfectx.app.layers.GradientStyle
+import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.Mask
 import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskOutline
@@ -955,6 +956,40 @@ private fun EffectsControls(
     }
 
     ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
+
+    if (layer is Layer.Gradient &&
+        (control == LayerControl.ColourFrom || control == LayerControl.ColourTo)
+    ) {
+        val atStart = control == LayerControl.ColourFrom
+        val colour = if (atStart) layer.from else layer.to
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(ColourTone.entries.toList(), key = { it.name }) { tone ->
+                PanelChip(label = tone.label, isSelected = tone == colour.tone) {
+                    viewModel.onGradientTone(layer.id, atStart, tone)
+                }
+            }
+        }
+    }
+
+    // Beside the falloff slider, since both are about the gradient's shape — and because a second
+    // permanent chip row would give back the height the photo was given.
+    if (layer is Layer.Gradient && control == LayerControl.Falloff) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(GradientStyle.entries.toList(), key = { it.name }) { style ->
+                PanelChip(label = style.label, isSelected = style == layer.spec.style) {
+                    viewModel.onGradientLayerSpec(layer.id) { it.copy(style = style) }
+                }
+            }
+        }
+    }
 }
 
 /** The single slider, showing whichever property the chips selected. */
@@ -985,6 +1020,39 @@ private fun ControlSlider(
             onChange = { viewModel.onLayerBlurRadius(layer.id, it.roundToInt()) },
             onChangeFinished = viewModel::commitLayerEdit,
         )
+
+        (control == LayerControl.ColourFrom || control == LayerControl.ColourTo) &&
+            layer is Layer.Gradient -> {
+            val atStart = control == LayerControl.ColourFrom
+            val colour = if (atStart) layer.from else layer.to
+            ValueSlider(
+                value = colour.hue,
+                range = 0f..360f,
+                readout = if (colour.tone == ColourTone.Hue) "${colour.hue.roundToInt()}°" else colour.tone.label,
+                onChange = { viewModel.onGradientHue(layer.id, atStart, it) },
+                onChangeFinished = viewModel::commitLayerEdit,
+            )
+        }
+
+        control == LayerControl.Falloff && layer is Layer.Gradient -> {
+            val midpoint = layer.spec.midpoint
+            ValueSlider(
+                value = midpoint,
+                range = MaskGradient.MIN_MIDPOINT..MaskGradient.MAX_MIDPOINT,
+                readout = "${(midpoint * 100).roundToInt()}",
+                onChange = { value ->
+                    viewModel.onGradientLayerSpec(layer.id) {
+                        it.copy(
+                            midpoint = value.coerceIn(
+                                MaskGradient.MIN_MIDPOINT,
+                                MaskGradient.MAX_MIDPOINT,
+                            ),
+                        )
+                    }
+                },
+                onChangeFinished = viewModel::commitLayerEdit,
+            )
+        }
 
         control == LayerControl.Falloff -> {
             val midpoint = state.activeMask?.gradient?.midpoint ?: 0.5f
