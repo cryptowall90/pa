@@ -8,6 +8,7 @@ import android.graphics.PointF
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.util.Log
 import com.pictureperfectx.app.capture.GPUImageBokehFilter
 import com.pictureperfectx.app.capture.ImageToner
@@ -80,6 +81,8 @@ object LayerRenderer {
 
         is Layer.Gradient -> gradient(source, layer)
 
+        is Layer.Text -> text(source, layer)
+
         // One pass however many channels are bent: the filter bakes all four splines into a single
         // lookup texture and the shader takes one sample per channel.
         is Layer.Curve -> if (layer.spec.isIdentity) {
@@ -98,6 +101,46 @@ object LayerRenderer {
                 }
                 .getBitmapWithFilterApplied(source)
         }
+    }
+
+    /**
+     * Draws the words onto a transparent bitmap the size of the photo.
+     *
+     * Type size is a fraction of the shorter edge rather than a pixel count, so the same layer
+     * comes out the same size on the preview and on the full-resolution export — the same reason
+     * masks are coverage grids and blur radius is a strength.
+     */
+    private fun text(source: Bitmap, layer: Layer.Text): Bitmap? {
+        if (layer.content.isBlank()) return null
+        val bitmap = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = layer.colour.toArgb()
+            textSize = layer.size * minOf(source.width, source.height)
+            typeface = when (layer.font) {
+                TextFont.Sans -> Typeface.SANS_SERIF
+                TextFont.Serif -> Typeface.SERIF
+                TextFont.Mono -> Typeface.MONOSPACE
+            }
+            textAlign = Paint.Align.CENTER
+        }
+
+        val lines = layer.content.split('\n')
+        val lineHeight = paint.fontSpacing
+        val centreX = layer.centre.x * source.width
+        val centreY = layer.centre.y * source.height
+
+        canvas.save()
+        canvas.rotate(layer.rotation, centreX, centreY)
+        // Centre the block on the point, then the first baseline sits half a line above it. The
+        // ascent/descent term is what centres the glyphs themselves rather than their baselines.
+        val firstBaseline =
+            centreY - (lines.size - 1) * lineHeight / 2f - (paint.ascent() + paint.descent()) / 2f
+        lines.forEachIndexed { index, line ->
+            canvas.drawText(line, centreX, firstBaseline + index * lineHeight, paint)
+        }
+        canvas.restore()
+        return bitmap
     }
 
     private fun List<CurvePoint>.toControlPoints(): Array<PointF> =

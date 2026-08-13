@@ -239,6 +239,31 @@ sealed interface Layer {
     ) : Layer
 
     /**
+     * Words on the photo.
+     *
+     * The first layer that carries *content* rather than an effect applied through a mask — and the
+     * renderer needs no change for it, because masking passes an effect straight through when there
+     * is no mask and the composite draws with alpha. Glyphs on a transparent bitmap were always
+     * going to composite correctly.
+     */
+    data class Text(
+        override val id: Long,
+        override val name: String = "Text",
+        override val isVisible: Boolean = true,
+        override val opacity: Float = 1f,
+        override val blend: BlendMode = BlendMode.Normal,
+        override val mask: Mask = Mask(),
+        val content: String = "Your text",
+        /** Where the text is centred, normalized like everything else a layer stores. */
+        val centre: MaskPoint = MaskPoint(0.5f, 0.5f),
+        /** Type size as a fraction of the image's shorter edge, so it survives the export. */
+        val size: Float = 0.09f,
+        val rotation: Float = 0f,
+        val colour: GradientColour = GradientColour(tone = ColourTone.White),
+        val font: TextFont = TextFont.Sans,
+    ) : Layer
+
+    /**
      * A tone curve per channel.
      *
      * The colour channels are what make this colour grading rather than only contrast: lifting red
@@ -314,6 +339,19 @@ fun Layer.withCommon(
     is Layer.Blur -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Gradient -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Curve -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Text -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+}
+
+/**
+ * The typefaces on offer.
+ *
+ * Three that every Android device has, rather than shipping font files: a missing font renders as
+ * something else entirely, and nothing about that is obvious from the layer that asked for it.
+ */
+enum class TextFont(val label: String) {
+    Sans("Sans"),
+    Serif("Serif"),
+    Mono("Mono"),
 }
 
 /**

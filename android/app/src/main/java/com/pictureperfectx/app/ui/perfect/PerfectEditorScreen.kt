@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -70,6 +71,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
@@ -82,6 +84,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -104,6 +107,7 @@ import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskOutline
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
+import com.pictureperfectx.app.layers.TextFont
 import com.pictureperfectx.app.ui.components.CameraNotice
 import kotlin.math.min
 import kotlinx.coroutines.coroutineScope
@@ -527,9 +531,7 @@ private fun EditorStage(
                         var lastSpan = 0f
 
                         if (canSelect) {
-                            if (tool != SelectionTool.Brush) {
-                                grabbed = handleAt(latestHandles, first.position, latestBounds, handleRadius)
-                            }
+                            grabbed = handleAt(latestHandles, first.position, latestBounds, handleRadius)
                             touch = first.position
                             when {
                                 grabbed >= 0 -> Unit
@@ -802,7 +804,11 @@ private fun paintAt(position: Offset, bounds: Rect, onPaint: (Float, Float) -> U
  * gradient's strong and far ends. A brushed area has neither, since no shape describes it.
  */
 private fun handlesOf(state: PerfectEditUiState): List<MaskPoint> {
-    if (!state.canSelect || state.selectionTool == SelectionTool.Brush) return emptyList()
+    if (!state.canSelect) return emptyList()
+    // A content layer's handle is its own, not its mask's — and it stays draggable whichever
+    // selection tool happens to be in hand, since it isn't a selection.
+    (state.document.selected as? Layer.Text)?.let { return listOf(it.centre) }
+    if (state.selectionTool == SelectionTool.Brush) return emptyList()
     val mask = state.activeMask ?: return emptyList()
     mask.gradient?.let { return listOf(it.start, it.end) }
     return mask.path.orEmpty()
@@ -973,6 +979,41 @@ private fun EffectsControls(
 
     ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
 
+    if (layer is Layer.Text) {
+        BasicTextField(
+            value = layer.content,
+            onValueChange = { viewModel.onTextContent(layer.id, it) },
+            textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+            cursorBrush = SolidColor(Brand),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0x22FFFFFF))
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(TextFont.entries.toList(), key = { it.name }) { font ->
+                PanelChip(label = font.label, isSelected = font == layer.font) {
+                    viewModel.onTextFont(layer.id, font)
+                }
+            }
+            // Clear is a gradient idea; invisible text is a bug report, not a choice.
+            items(
+                ColourTone.entries.filter { it != ColourTone.Clear },
+                key = { "tone-" + it.name },
+            ) { tone ->
+                PanelChip(label = tone.label, isSelected = tone == layer.colour.tone) {
+                    viewModel.onTextTone(layer.id, tone)
+                }
+            }
+        }
+    }
+
     if (layer is Layer.Curve) {
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
@@ -1080,6 +1121,34 @@ private fun ControlSlider(
                 onChangeFinished = viewModel::commitLayerEdit,
             )
         }
+
+        control == LayerControl.TextSize && layer is Layer.Text -> ValueSlider(
+            value = layer.size,
+            range = 0.02f..0.5f,
+            readout = "${(layer.size * 100).roundToInt()}",
+            onChange = { viewModel.onTextSize(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.TextRotation && layer is Layer.Text -> ValueSlider(
+            value = layer.rotation,
+            range = -180f..180f,
+            readout = "${layer.rotation.roundToInt()}°",
+            onChange = { viewModel.onTextRotation(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.TextColour && layer is Layer.Text -> ValueSlider(
+            value = layer.colour.hue,
+            range = 0f..360f,
+            readout = if (layer.colour.tone == ColourTone.Hue) {
+                "${layer.colour.hue.roundToInt()}°"
+            } else {
+                layer.colour.tone.label
+            },
+            onChange = { viewModel.onTextHue(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
 
         control == LayerControl.Intensity && layer is Layer.Look -> ValueSlider(
             value = layer.intensity.toFloat(),

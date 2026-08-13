@@ -36,6 +36,7 @@ import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskLasso
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
+import com.pictureperfectx.app.layers.TextFont
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -65,6 +66,7 @@ enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
     Look("Look", "One of a hundred film and colour looks."),
     Curve("Curve", "Tone curves, per channel, for contrast and grading."),
+    Text("Text", "Words on the photo."),
     Gradient("Gradient", "A wash of colour across the photo."),
 }
 
@@ -98,6 +100,9 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
     Falloff("Falloff"),
     ColourFrom("From"),
     ColourTo("To"),
+    TextSize("Size"),
+    TextRotation("Rotate"),
+    TextColour("Colour"),
     BrushSize("Brush size");
 
     companion object {
@@ -111,6 +116,7 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
                 is Layer.Gradient -> { add(ColourFrom); add(ColourTo); add(Falloff) }
                 // A curve's control is the graph itself, not a slider.
                 is Layer.Curve -> Unit
+                is Layer.Text -> { add(TextSize); add(TextRotation); add(TextColour) }
                 is Layer.Look -> add(Intensity)
             }
             add(Opacity)
@@ -468,6 +474,10 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
+            EffectKind.Text -> state.document.add {
+                Layer.Text(id = it, name = "$ordinal · ${kind.label}", mask = mask)
+            }
+
             EffectKind.Gradient -> state.document.add {
                 Layer.Gradient(
                     id = it,
@@ -484,6 +494,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             EffectKind.Gradient -> LayerControl.ColourFrom
             EffectKind.Look -> LayerControl.Intensity
             EffectKind.Curve -> LayerControl.Opacity
+            EffectKind.Text -> LayerControl.TextSize
             EffectKind.Tone -> LayerControl.ToneShadows
         }
         _state.update { it.copy(pendingSelection = null, control = control) }
@@ -541,6 +552,30 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             if (layer is Layer.Blur) layer.copy(radius = radius.coerceIn(1, 60)) else layer
         }
         applyDocument(document, record = false)
+    }
+
+    fun onTextContent(id: Long, content: String) =
+        updateText(id, record = false) { it.copy(content = content) }
+
+    fun onTextSize(id: Long, size: Float) =
+        updateText(id, record = false) { it.copy(size = size.coerceIn(0.02f, 0.5f)) }
+
+    fun onTextRotation(id: Long, degrees: Float) =
+        updateText(id, record = false) { it.copy(rotation = degrees.coerceIn(-180f, 180f)) }
+
+    fun onTextHue(id: Long, hue: Float) =
+        updateText(id, record = false) { it.copy(colour = it.colour.copy(hue = hue.coerceIn(0f, 360f))) }
+
+    fun onTextTone(id: Long, tone: ColourTone) =
+        updateText(id, record = true) { it.copy(colour = it.colour.copy(tone = tone)) }
+
+    fun onTextFont(id: Long, font: TextFont) = updateText(id, record = true) { it.copy(font = font) }
+
+    private fun updateText(id: Long, record: Boolean, transform: (Layer.Text) -> Layer.Text) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Text) transform(layer) else layer
+        }
+        if (record) commit(document) else applyDocument(document, record = false)
     }
 
     fun onSelectCurveChannel(channel: CurveChannel) =
@@ -781,6 +816,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * out from under the finger holding it.
      */
     fun onMoveHandle(index: Int, point: MaskPoint) {
+        // Content layers put their own handle on the canvas rather than the mask's.
+        (_state.value.document.selected as? Layer.Text)?.let { text ->
+            updateText(text.id, record = false) { it.copy(centre = point) }
+            return
+        }
         val current = _state.value.activeMask ?: return
         val gradient = current.gradient
         if (gradient != null) {
