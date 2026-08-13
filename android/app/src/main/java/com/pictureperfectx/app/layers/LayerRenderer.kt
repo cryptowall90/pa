@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
@@ -13,6 +14,7 @@ import com.pictureperfectx.app.capture.ImageToner
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageToneCurveFilter
 import kotlin.math.roundToInt
 
 /**
@@ -77,7 +79,29 @@ object LayerRenderer {
         is Layer.Blur -> bokeh(context, source, layer.radius)
 
         is Layer.Gradient -> gradient(source, layer)
+
+        // One pass however many channels are bent: the filter bakes all four splines into a single
+        // lookup texture and the shader takes one sample per channel.
+        is Layer.Curve -> if (layer.spec.isIdentity) {
+            null
+        } else {
+            GPUImage(context.applicationContext)
+                .apply {
+                    setFilter(
+                        GPUImageToneCurveFilter().apply {
+                            setRgbCompositeControlPoints(layer.spec.rgb.toControlPoints())
+                            setRedControlPoints(layer.spec.red.toControlPoints())
+                            setGreenControlPoints(layer.spec.green.toControlPoints())
+                            setBlueControlPoints(layer.spec.blue.toControlPoints())
+                        },
+                    )
+                }
+                .getBitmapWithFilterApplied(source)
+        }
     }
+
+    private fun List<CurvePoint>.toControlPoints(): Array<PointF> =
+        Array(size) { PointF(this[it].x, this[it].y) }
 
     /**
      * Renders a colour gradient at [source]'s size.

@@ -20,6 +20,10 @@ import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.layers.BlendMode
 import com.pictureperfectx.app.layers.ColourTone
+import com.pictureperfectx.app.layers.CurveChannel
+import com.pictureperfectx.app.layers.CurvePoint
+import com.pictureperfectx.app.layers.CurveSpec
+import com.pictureperfectx.app.layers.Curves
 import com.pictureperfectx.app.layers.Document
 import com.pictureperfectx.app.layers.GradientSpec
 import com.pictureperfectx.app.layers.GradientStyle
@@ -60,6 +64,7 @@ enum class EditorPanel(val label: String) {
 enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
     Look("Look", "One of a hundred film and colour looks."),
+    Curve("Curve", "Tone curves, per channel, for contrast and grading."),
     Gradient("Gradient", "A wash of colour across the photo."),
 }
 
@@ -104,6 +109,8 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
                 is Layer.Tone -> addAll(entries.filter { it.band != null })
                 is Layer.Blur -> add(Blur)
                 is Layer.Gradient -> { add(ColourFrom); add(ColourTo); add(Falloff) }
+                // A curve's control is the graph itself, not a slider.
+                is Layer.Curve -> Unit
                 is Layer.Look -> add(Intensity)
             }
             add(Opacity)
@@ -130,6 +137,8 @@ data class PerfectEditUiState(
     val selectionMode: SelectionMode = SelectionMode.Replace,
     /** The shape the next gradient will be drawn in. */
     val gradientStyle: GradientStyle = GradientStyle.Linear,
+    /** Which channel the curve editor is drawing on. */
+    val curveChannel: CurveChannel = CurveChannel.Rgb,
     /**
      * An area drawn before any effect was chosen. The next effect added takes it as its mask, which
      * is the draw-then-adjust order selections are normally used in.
@@ -441,6 +450,24 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
+            EffectKind.Curve -> state.document.add {
+                Layer.Curve(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    // A gentle S: more contrast, and a visible starting shape to bend from rather
+                    // than a straight line that looks like nothing happened.
+                    spec = CurveSpec(
+                        rgb = listOf(
+                            CurvePoint(0f, 0f),
+                            CurvePoint(0.25f, 0.19f),
+                            CurvePoint(0.75f, 0.81f),
+                            CurvePoint(1f, 1f),
+                        ),
+                    ),
+                    mask = mask,
+                )
+            }
+
             EffectKind.Gradient -> state.document.add {
                 Layer.Gradient(
                     id = it,
@@ -456,6 +483,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         val control = when (kind) {
             EffectKind.Gradient -> LayerControl.ColourFrom
             EffectKind.Look -> LayerControl.Intensity
+            EffectKind.Curve -> LayerControl.Opacity
             EffectKind.Tone -> LayerControl.ToneShadows
         }
         _state.update { it.copy(pendingSelection = null, control = control) }
@@ -513,6 +541,35 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             if (layer is Layer.Blur) layer.copy(radius = radius.coerceIn(1, 60)) else layer
         }
         applyDocument(document, record = false)
+    }
+
+    fun onSelectCurveChannel(channel: CurveChannel) =
+        _state.update { it.copy(curveChannel = channel) }
+
+    /** Drags one control point. The whole drag is one undo step, like a brush stroke. */
+    fun onMoveCurvePoint(id: Long, index: Int, to: CurvePoint) =
+        updateCurve(id, record = false) { Curves.move(it, index, to) }
+
+    fun onAddCurvePoint(id: Long, at: CurvePoint) =
+        updateCurve(id, record = true) { Curves.add(it, at) }
+
+    fun onRemoveCurvePoint(id: Long, index: Int) =
+        updateCurve(id, record = true) { Curves.remove(it, index) }
+
+    private fun updateCurve(
+        id: Long,
+        record: Boolean,
+        transform: (List<CurvePoint>) -> List<CurvePoint>,
+    ) {
+        val channel = _state.value.curveChannel
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Curve) {
+                layer.copy(spec = layer.spec.with(channel, transform(layer.spec.channel(channel))))
+            } else {
+                layer
+            }
+        }
+        if (record) commit(document) else applyDocument(document, record = false)
     }
 
     /** Swaps inside for outside, so lassoing a subject can adjust everything except it. */

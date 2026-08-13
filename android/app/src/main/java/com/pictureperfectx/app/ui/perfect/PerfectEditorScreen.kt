@@ -1,5 +1,6 @@
 package com.pictureperfectx.app.ui.perfect
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
@@ -9,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,6 +65,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -91,6 +94,9 @@ import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.layers.ColourTone
+import com.pictureperfectx.app.layers.CurveChannel
+import com.pictureperfectx.app.layers.CurvePoint
+import com.pictureperfectx.app.layers.Curves
 import com.pictureperfectx.app.layers.GradientStyle
 import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.Mask
@@ -100,6 +106,8 @@ import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.ui.components.CameraNotice
 import kotlin.math.min
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 private val Brand = Color(0xFFFF4D6D)
@@ -113,6 +121,12 @@ private const val MAX_ZOOM = 8f
 /** Drawn size of a lasso handle, and how close a touch must land to grab one. */
 private const val HANDLE_RADIUS = 5
 private const val HANDLE_TOUCH_RADIUS = 24
+
+/** The curve graph's side, in dp. Square, so its steepness reads honestly. */
+private const val CURVE_SIZE = 210
+private const val CURVE_GRAB = 0.08f
+private const val CURVE_HISTOGRAM_BUCKETS = 48
+private const val HISTOGRAM_STRIDE = 7
 
 private const val LOUPE_RADIUS = 46
 private const val LOUPE_MAGNIFICATION = 2.5f
@@ -959,6 +973,29 @@ private fun EffectsControls(
 
     ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
 
+    if (layer is Layer.Curve) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(CurveChannel.entries.toList(), key = { it.name }) { channel ->
+                PanelChip(label = channel.label, isSelected = channel == state.curveChannel) {
+                    viewModel.onSelectCurveChannel(channel)
+                }
+            }
+        }
+        CurveEditor(
+            points = layer.spec.channel(state.curveChannel),
+            channel = state.curveChannel,
+            histogram = state.canvas?.let { rememberHistogram(it, state.curveChannel) },
+            onMove = { index, point -> viewModel.onMoveCurvePoint(layer.id, index, point) },
+            onAdd = { viewModel.onAddCurvePoint(layer.id, it) },
+            onRemove = { viewModel.onRemoveCurvePoint(layer.id, it) },
+            onFinished = viewModel::commitLayerEdit,
+        )
+    }
+
     if (layer is Layer.Look) {
         LookRow(
             filters = viewModel.filters,
@@ -1186,6 +1223,163 @@ private fun LayerRow(
         }
     }
 }
+
+/**
+ * The curve, and the touch handling that bends it.
+ *
+ * Square and centred, because a curve read on a stretched graph misleads about how steep it is —
+ * and steepness is the whole reading. It takes height from the photo while it's open, which is the
+ * one place in this editor that's worth it: you can't judge a curve you can't see.
+ */
+@Composable
+private fun CurveEditor(
+    points: List<CurvePoint>,
+    channel: CurveChannel,
+    histogram: FloatArray?,
+    onMove: (Int, CurvePoint) -> Unit,
+    onAdd: (CurvePoint) -> Unit,
+    onRemove: (Int) -> Unit,
+    onFinished: () -> Unit,
+) {
+    val ink = when (channel) {
+        CurveChannel.Rgb -> Color.White
+        CurveChannel.Red -> Color(0xFFFF6B6B)
+        CurveChannel.Green -> Color(0xFF6BE07A)
+        CurveChannel.Blue -> Color(0xFF6BA8FF)
+    }
+    val latestPoints by rememberUpdatedState(points)
+
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+      Box(
+        modifier = Modifier
+            .size(CURVE_SIZE.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0x59000000))
+            .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
+            .pointerInput(Unit) {
+                // Input runs bottom-left to top-right, so y is flipped against the screen.
+                fun at(position: Offset) = CurvePoint(
+                    x = (position.x / size.width).coerceIn(0f, 1f),
+                    y = (1f - position.y / size.height).coerceIn(0f, 1f),
+                )
+                // Both detectors in one block, each on its own coroutine: two pointerInput
+                // modifiers on the same node race for the down event and one loses.
+                coroutineScope {
+                    launch {
+                        detectTapGestures(
+                            onTap = { onAdd(at(it)) },
+                            // Long press to remove rather than a double tap: a second tap would
+                            // first be read as the tap that adds a point.
+                            onLongPress = { position ->
+                                val index = Curves.nearest(latestPoints, at(position), CURVE_GRAB)
+                                if (index >= 0) onRemove(index)
+                            },
+                        )
+                    }
+                    launch {
+                        var dragging = -1
+                        detectDragGestures(
+                            onDragStart = {
+                                dragging = Curves.nearest(latestPoints, at(it), CURVE_GRAB)
+                            },
+                            onDragEnd = { if (dragging >= 0) onFinished(); dragging = -1 },
+                            onDragCancel = { dragging = -1 },
+                        ) { change, _ ->
+                            change.consume()
+                            if (dragging >= 0) onMove(dragging, at(change.position))
+                        }
+                    }
+                }
+            },
+      ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            fun onScreen(point: CurvePoint) =
+                Offset(point.x * size.width, (1f - point.y) * size.height)
+
+            // The histogram says where the tones actually are, which is what turns a curve from
+            // guesswork into a decision.
+            histogram?.let { bars ->
+                val width = size.width / bars.size
+                bars.forEachIndexed { index, value ->
+                    drawRect(
+                        color = Color(0x33FFFFFF),
+                        topLeft = Offset(index * width, size.height * (1f - value)),
+                        size = Size(width, size.height * value),
+                    )
+                }
+            }
+
+            // Quarters, so an eye can find the shadows and highlights without measuring.
+            for (step in 1..3) {
+                val at = size.width * step / 4f
+                drawLine(Color(0x22FFFFFF), Offset(at, 0f), Offset(at, size.height), 1.dp.toPx())
+                val down = size.height * step / 4f
+                drawLine(Color(0x22FFFFFF), Offset(0f, down), Offset(size.width, down), 1.dp.toPx())
+            }
+            drawLine(
+                color = Color(0x33FFFFFF),
+                start = Offset(0f, size.height),
+                end = Offset(size.width, 0f),
+                strokeWidth = 1.dp.toPx(),
+            )
+
+            val path = Path()
+            points.forEachIndexed { index, point ->
+                val screen = onScreen(point)
+                if (index == 0) path.moveTo(screen.x, screen.y) else path.lineTo(screen.x, screen.y)
+            }
+            drawPath(path, color = ink, style = Stroke(width = 2.dp.toPx()))
+
+            points.forEach { point ->
+                val screen = onScreen(point)
+                drawCircle(Color(0xCC000000), radius = 6.dp.toPx(), center = screen)
+                drawCircle(ink, radius = 4.dp.toPx(), center = screen)
+            }
+        }
+      }
+    }
+}
+
+/**
+ * A coarse histogram of the preview.
+ *
+ * Sampled on a stride rather than every pixel — a million reads on the main thread for a graph an
+ * inch wide would be a stutter every time the preview re-renders, and a stride of seven describes
+ * the same distribution.
+ */
+@Composable
+private fun rememberHistogram(canvas: Bitmap, channel: CurveChannel): FloatArray =
+    remember(canvas, channel) {
+        val buckets = FloatArray(CURVE_HISTOGRAM_BUCKETS)
+        val width = canvas.width
+        if (width <= 0 || canvas.height <= 0 || canvas.isRecycled) return@remember buckets
+
+        val row = IntArray(width)
+        var y = 0
+        while (y < canvas.height) {
+            canvas.getPixels(row, 0, width, 0, y, width, 1)
+            var x = 0
+            while (x < width) {
+                val pixel = row[x]
+                val value = when (channel) {
+                    CurveChannel.Red -> (pixel shr 16) and 0xFF
+                    CurveChannel.Green -> (pixel shr 8) and 0xFF
+                    CurveChannel.Blue -> pixel and 0xFF
+                    CurveChannel.Rgb -> (
+                        ((pixel shr 16) and 0xFF) * 299 +
+                            ((pixel shr 8) and 0xFF) * 587 +
+                            (pixel and 0xFF) * 114
+                        ) / 1000
+                }
+                buckets[value * (CURVE_HISTOGRAM_BUCKETS - 1) / 255]++
+                x += HISTOGRAM_STRIDE
+            }
+            y += HISTOGRAM_STRIDE
+        }
+        // Scaled against the tallest bar: the shape is the point, not the absolute counts.
+        val tallest = buckets.maxOrNull()?.coerceAtLeast(1f) ?: 1f
+        FloatArray(buckets.size) { (buckets[it] / tallest).coerceIn(0f, 1f) }
+    }
 
 /**
  * The hundred looks, as a scrolling row wearing their own colours.

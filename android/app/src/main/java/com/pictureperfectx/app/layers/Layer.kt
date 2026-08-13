@@ -239,6 +239,23 @@ sealed interface Layer {
     ) : Layer
 
     /**
+     * A tone curve per channel.
+     *
+     * The colour channels are what make this colour grading rather than only contrast: lifting red
+     * in the shadows warms them, pulling blue down in the highlights cools them. Separate tint
+     * sliders would be a second mechanism arguing with this one over the same pixels.
+     */
+    data class Curve(
+        override val id: Long,
+        override val name: String = "Curve",
+        override val isVisible: Boolean = true,
+        override val opacity: Float = 1f,
+        override val blend: BlendMode = BlendMode.Normal,
+        override val mask: Mask = Mask(),
+        val spec: CurveSpec = CurveSpec(),
+    ) : Layer
+
+    /**
      * A wash of colour running from [from] to [to] across the frame.
      *
      * The gradient it is drawn from is the same [GradientSpec] a mask uses, rendered through the
@@ -296,6 +313,7 @@ fun Layer.withCommon(
     is Layer.Look -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Blur -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Gradient -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Curve -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
 }
 
 /**
