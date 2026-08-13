@@ -1094,9 +1094,19 @@ private fun EffectsControls(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(ColourTone.entries.toList(), key = { it.name }) { tone ->
+            // Clear is a ramp idea — a fill of nothing is just a hidden layer.
+            items(
+                ColourTone.entries.filter { !layer.solid || it != ColourTone.Clear },
+                key = { it.name },
+            ) { tone ->
                 PanelChip(label = tone.label, isSelected = tone == colour.tone) {
                     viewModel.onGradientTone(layer.id, atStart, tone)
+                }
+            }
+            // Turning this off is how a fill becomes a gradient, which is why they share a layer.
+            item {
+                PanelChip(label = "Solid", isSelected = layer.solid) {
+                    viewModel.onToggleGradientSolid(layer.id)
                 }
             }
         }
@@ -1104,7 +1114,7 @@ private fun EffectsControls(
 
     // Beside the falloff slider, since both are about the gradient's shape — and because a second
     // permanent chip row would give back the height the photo was given.
-    if (layer is Layer.Gradient && control == LayerControl.Falloff) {
+    if (layer is Layer.Gradient && control == LayerControl.Falloff && !layer.solid) {
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 20.dp),

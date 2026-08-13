@@ -78,6 +78,7 @@ enum class EffectKind(val label: String, val description: String) {
     Whiten("Whiten", "Brush over teeth or eyes to lift them."),
     Brighten("Brighten", "Brush under the eyes to lift the shadows."),
     Gradient("Gradient", "A wash of colour across the photo."),
+    Fill("Fill", "A flat colour inside your selection."),
 }
 
 /** How an area is chosen: drawn round, painted in by hand, or faded across the frame. */
@@ -126,7 +127,12 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
                 // means a band added to ToneAdjustments can't be left without a control.
                 is Layer.Tone -> addAll(entries.filter { it.band != null })
                 is Layer.Blur -> add(Blur)
-                is Layer.Gradient -> { add(ColourFrom); add(ColourTo); add(Falloff) }
+                is Layer.Gradient -> {
+                    add(ColourFrom)
+                    // A fill has one colour, so a second control for it would be a duplicate — and
+                    // the shape of the ramp means nothing when both ends match.
+                    if (!layer.solid) { add(ColourTo); add(Falloff) }
+                }
                 // A curve's control is the graph itself, not a slider.
                 is Layer.Curve -> Unit
                 is Layer.Text -> { add(TextSize); add(TextRotation); add(TextColour) }
@@ -529,6 +535,19 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
+            // A gradient with both ends locked together. Normal rather than Multiply, which is
+            // right for a wash and wrong for a fill — over a solid colour it darkens the photo
+            // instead of covering it.
+            EffectKind.Fill -> state.document.add {
+                Layer.Gradient(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    blend = BlendMode.Normal,
+                    solid = true,
+                    mask = mask,
+                )
+            }
+
             EffectKind.Gradient -> state.document.add {
                 Layer.Gradient(
                     id = it,
@@ -550,6 +569,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             EffectKind.Smooth -> LayerControl.SmoothAmount
             EffectKind.Heal -> LayerControl.HealSize
             EffectKind.Whiten, EffectKind.Brighten -> LayerControl.ToneExposure
+            EffectKind.Fill -> LayerControl.ColourFrom
             EffectKind.Tone -> LayerControl.ToneShadows
         }
         // The retouching presets are meant to be brushed onto a small area, so hand over the brush
@@ -794,16 +814,40 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applyDocument(document, record = false)
     }
 
-    /** The hue at one end of a gradient layer's wash. */
+    /**
+     * The hue at one end of a gradient layer's wash — or at both, when it's a fill.
+     *
+     * Without that, the first thing anyone does to a fill breaks it: the colour slider edits one
+     * end, and a flat orange silently becomes an orange-to-something ramp.
+     */
     fun onGradientHue(id: Long, atStart: Boolean, hue: Float) = updateGradientLayer(id) { layer ->
         val colour = (if (atStart) layer.from else layer.to).copy(hue = hue.coerceIn(0f, 360f))
-        if (atStart) layer.copy(from = colour) else layer.copy(to = colour)
+        when {
+            layer.solid -> layer.copy(from = colour, to = colour)
+            atStart -> layer.copy(from = colour)
+            else -> layer.copy(to = colour)
+        }
     }
 
     /** Black, white, clear or a colour, at one end of a gradient layer's wash. */
     fun onGradientTone(id: Long, atStart: Boolean, tone: ColourTone) = updateGradientLayer(id) { layer ->
         val colour = (if (atStart) layer.from else layer.to).copy(tone = tone)
-        if (atStart) layer.copy(from = colour) else layer.copy(to = colour)
+        when {
+            layer.solid -> layer.copy(from = colour, to = colour)
+            atStart -> layer.copy(from = colour)
+            else -> layer.copy(to = colour)
+        }
+    }
+
+    /** Off is how a fill becomes a gradient: the far end is freed and gets its own control back. */
+    fun onToggleGradientSolid(id: Long) = updateGradientLayer(id) { layer ->
+        if (layer.solid) {
+            // Leaving on the colour it already had would look like nothing happened, so the far end
+            // fades out — the shape a gradient is usually wanted in.
+            layer.copy(solid = false, to = layer.from.copy(tone = ColourTone.Clear))
+        } else {
+            layer.copy(solid = true, to = layer.from)
+        }
     }
 
     /** How a gradient layer's own wash is placed, as opposed to the area any layer applies through. */

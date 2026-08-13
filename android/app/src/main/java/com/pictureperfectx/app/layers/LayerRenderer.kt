@@ -304,7 +304,9 @@ object LayerRenderer {
         val height = (source.height * scale).toInt().coerceAtLeast(1)
 
         val from = layer.from.toArgb()
-        val to = layer.to.toArgb()
+        // Read one end twice rather than trusting the pair to be equal: if they ever drifted, a
+        // "fill" would quietly render a faint ramp and look like a rendering bug.
+        val to = if (layer.solid) from else layer.to.toArgb()
         val pixels = IntArray(width * height) { index ->
             val column = index % width
             val row = index / width

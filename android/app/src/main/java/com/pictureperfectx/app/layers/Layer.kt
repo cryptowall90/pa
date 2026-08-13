@@ -359,6 +359,14 @@ sealed interface Layer {
         val spec: GradientSpec = GradientSpec(),
         val from: GradientColour = GradientColour(hue = 20f),
         val to: GradientColour = GradientColour(tone = ColourTone.Clear),
+        /**
+         * Both ends the same colour, so this is a flat fill rather than a ramp.
+         *
+         * A separate layer kind would duplicate all of this for no capability it doesn't already
+         * have. Turning the flag off is how a fill becomes a gradient again, which is the reason
+         * they share a layer at all.
+         */
+        val solid: Boolean = false,
     ) : Layer
 }
 
