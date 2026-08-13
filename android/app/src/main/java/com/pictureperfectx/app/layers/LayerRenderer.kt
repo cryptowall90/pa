@@ -15,6 +15,7 @@ import com.pictureperfectx.app.capture.ImageToner
 import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.filter.FilterFactory
 import jp.co.cyberagent.android.gpuimage.GPUImage
+import jp.co.cyberagent.android.gpuimage.filter.GPUImageBilateralBlurFilter
 import jp.co.cyberagent.android.gpuimage.filter.GPUImageToneCurveFilter
 import kotlin.math.roundToInt
 
@@ -43,6 +44,12 @@ object LayerRenderer {
 
     /** A stroked shape asked for no width still needs one, or it draws nothing at all. */
     private const val MIN_STROKE = 0.004f
+
+    // How far the bilateral blur reaches across a colour difference: low smooths hard, high barely
+    // at all. The strength cap is what stops the top of the slider turning skin to plastic.
+    private const val SMOOTH_MIN_DISTANCE = 2f
+    private const val SMOOTH_MAX_DISTANCE = 12f
+    private const val SMOOTH_MAX_STRENGTH = 0.8f
 
     fun render(context: Context, base: Bitmap, document: Document): Bitmap {
         val layers = document.renderable()
@@ -87,6 +94,10 @@ object LayerRenderer {
         is Layer.Text -> text(source, layer)
 
         is Layer.Shape -> shape(source, layer)
+
+        is Layer.Smooth -> smooth(context, source, layer.amount)
+
+        is Layer.Heal -> heal(source, layer)
 
         // One pass however many channels are bent: the filter bakes all four splines into a single
         // lookup texture and the shader takes one sample per channel.
@@ -146,6 +157,71 @@ object LayerRenderer {
         }
         canvas.restore()
         return bitmap
+    }
+
+    /**
+     * Replays the heal dabs over a copy of the photo.
+     *
+     * Radii are fractions of the shorter edge and the dabs are normalized, so the same list lands
+     * in the same places on the preview and on the export — the whole reason a heal is stored as
+     * taps rather than as painted pixels.
+     */
+    private fun heal(source: Bitmap, layer: Layer.Heal): Bitmap? {
+        if (layer.dabs.isEmpty()) return null
+        val width = source.width
+        val height = source.height
+        if (width <= 0 || height <= 0) return null
+
+        val pixels = IntArray(width * height)
+        source.getPixels(pixels, 0, width, 0, 0, width, height)
+        val shortEdge = minOf(width, height)
+
+        layer.dabs.forEach { dab ->
+            Heal.apply(
+                pixels = pixels,
+                width = width,
+                height = height,
+                x = (dab.centre.x * width).roundToInt(),
+                y = (dab.centre.y * height).roundToInt(),
+                sourceX = (dab.source.x * width).roundToInt(),
+                sourceY = (dab.source.y * height).roundToInt(),
+                radius = (dab.radius * shortEdge).roundToInt(),
+            )
+        }
+        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+    }
+
+    /**
+     * Softens skin without flattening it.
+     *
+     * The amount drives how far the bilateral blur will average across a colour difference — but
+     * some of the original is always drawn back over the top, because a bilateral blur taken to its
+     * limit turns skin to plastic, which is the failure mode of every retouching tool.
+     */
+    private fun smooth(context: Context, source: Bitmap, amount: Int): Bitmap? {
+        val strength = amount.coerceIn(0, 100) / 100f
+        if (strength <= 0f) return null
+
+        val blurred = GPUImage(context.applicationContext)
+            .apply {
+                setFilter(
+                    GPUImageBilateralBlurFilter(
+                        SMOOTH_MIN_DISTANCE + (SMOOTH_MAX_DISTANCE - SMOOTH_MIN_DISTANCE) * (1f - strength),
+                    ),
+                )
+            }
+            .getBitmapWithFilterApplied(source)
+
+        val keep = 1f - SMOOTH_MAX_STRENGTH * strength
+        val out = blurred.copy(Bitmap.Config.ARGB_8888, true) ?: return blurred
+        if (blurred !== out && !blurred.isRecycled) blurred.recycle()
+        Canvas(out).drawBitmap(
+            source,
+            0f,
+            0f,
+            Paint().apply { alpha = (keep.coerceIn(0f, 1f) * 255).roundToInt() },
+        )
+        return out
     }
 
     /** Draws the shape onto a transparent bitmap the size of the photo. */

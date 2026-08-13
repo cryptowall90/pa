@@ -178,6 +178,7 @@ fun PerfectEditorScreen(
                 onMovePoint = viewModel::onMoveHandle,
                 onGradientStart = viewModel::onGradientStart,
                 onGradient = viewModel::onGradientDrawn,
+                onHeal = viewModel::onHealAt,
                 modifier = Modifier.weight(1f).fillMaxWidth().statusBarsPadding(),
             )
 
@@ -402,6 +403,7 @@ private fun EditorStage(
     onMovePoint: (Int, MaskPoint) -> Unit,
     onGradientStart: () -> Unit,
     onGradient: (MaskPoint, MaskPoint) -> Unit,
+    onHeal: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
@@ -508,6 +510,7 @@ private fun EditorStage(
         val latestHandles by rememberUpdatedState(handlesOf(state))
         val canSelect = state.canSelect
         val tool = state.selectionTool
+        val healing = state.document.selected is Layer.Heal
 
         Box(
             modifier = Modifier
@@ -516,7 +519,7 @@ private fun EditorStage(
                     // A zoomed-in canvas with no way back is a trap.
                     detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero })
                 }
-                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, tool) {
+                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, tool, healing) {
                     val handleRadius = HANDLE_TOUCH_RADIUS.dp.toPx()
                     val minStep = 3.dp.toPx()
 
@@ -536,6 +539,15 @@ private fun EditorStage(
                             touch = first.position
                             when {
                                 grabbed >= 0 -> Unit
+                                // A blemish is covered by tapping it, not by dragging over it, so
+                                // this needs no drag state at all.
+                                healing -> {
+                                    val point = first.position.normalizedIn(latestBounds)
+                                    if (point.x in 0f..1f && point.y in 0f..1f) {
+                                        onHeal(point.x, point.y)
+                                    }
+                                    touch = null
+                                }
                                 tool == SelectionTool.Lasso -> {
                                     tracing = true
                                     trace = listOf(first.position)
@@ -1175,6 +1187,21 @@ private fun ControlSlider(
             },
             onChange = { viewModel.onTextHue(layer.id, it) },
             onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.SmoothAmount && layer is Layer.Smooth -> ValueSlider(
+            value = layer.amount.toFloat(),
+            range = 0f..100f,
+            readout = "${layer.amount}",
+            onChange = { viewModel.onSmoothAmount(layer.id, it.roundToInt()) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.HealSize -> ValueSlider(
+            value = state.healRadius,
+            range = 0.005f..0.08f,
+            readout = "${(state.healRadius * 1000).roundToInt()}",
+            onChange = viewModel::onHealRadius,
         )
 
         control == LayerControl.ShapeStroke && layer is Layer.Shape -> ValueSlider(

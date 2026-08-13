@@ -264,6 +264,41 @@ sealed interface Layer {
     ) : Layer
 
     /**
+     * Blemishes covered with clean skin from nearby.
+     *
+     * A list of taps rather than pixels, like every other layer: the dabs replay over the original
+     * at whatever resolution is being rendered, so the layer stays non-destructive and the export
+     * matches the preview. Each dab carries the source it borrowed from, resolved once when it was
+     * placed — searching again at export time could pick a different patch.
+     */
+    data class Heal(
+        override val id: Long,
+        override val name: String = "Heal",
+        override val isVisible: Boolean = true,
+        override val opacity: Float = 1f,
+        override val blend: BlendMode = BlendMode.Normal,
+        override val mask: Mask = Mask(),
+        val dabs: List<HealDab> = emptyList(),
+    ) : Layer
+
+    /**
+     * Edge-preserving smoothing, for skin.
+     *
+     * A plain blur takes the pores and the eyelashes with them. A bilateral blur averages only
+     * neighbours of a similar colour, so flat areas soften and edges stay — which is the whole
+     * difference between retouching and smearing.
+     */
+    data class Smooth(
+        override val id: Long,
+        override val name: String = "Smooth",
+        override val isVisible: Boolean = true,
+        override val opacity: Float = 1f,
+        override val blend: BlendMode = BlendMode.Normal,
+        override val mask: Mask = Mask(),
+        val amount: Int = 55,
+    ) : Layer
+
+    /**
      * A rectangle, ellipse or line drawn over the photo.
      *
      * Content like [Text], and placed the same way: a centre, a size as fractions of the frame, and
@@ -368,6 +403,8 @@ fun Layer.withCommon(
     is Layer.Curve -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Text -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Shape -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Smooth -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Heal -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
 }
 
 /** A line has no inside, so it is always stroked whatever the stroke width says. */

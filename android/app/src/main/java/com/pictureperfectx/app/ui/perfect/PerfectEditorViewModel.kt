@@ -27,6 +27,8 @@ import com.pictureperfectx.app.layers.Curves
 import com.pictureperfectx.app.layers.Document
 import com.pictureperfectx.app.layers.GradientSpec
 import com.pictureperfectx.app.layers.GradientStyle
+import com.pictureperfectx.app.layers.Heal
+import com.pictureperfectx.app.layers.HealDab
 import com.pictureperfectx.app.layers.History
 import com.pictureperfectx.app.layers.Layer
 import com.pictureperfectx.app.layers.LayerRenderer
@@ -39,6 +41,7 @@ import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -70,6 +73,10 @@ enum class EffectKind(val label: String, val description: String) {
     Curve("Curve", "Tone curves, per channel, for contrast and grading."),
     Text("Text", "Words on the photo."),
     Shape("Shape", "A rectangle, ellipse or line."),
+    Smooth("Smooth", "Soften skin without losing its edges."),
+    Heal("Heal", "Tap a blemish to cover it with skin from nearby."),
+    Whiten("Whiten", "Brush over teeth or eyes to lift them."),
+    Brighten("Brighten", "Brush under the eyes to lift the shadows."),
     Gradient("Gradient", "A wash of colour across the photo."),
 }
 
@@ -107,6 +114,8 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
     TextRotation("Rotate"),
     TextColour("Colour"),
     ShapeStroke("Outline"),
+    SmoothAmount("Amount"),
+    HealSize("Spot size"),
     BrushSize("Brush size");
 
     companion object {
@@ -122,6 +131,8 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
                 is Layer.Curve -> Unit
                 is Layer.Text -> { add(TextSize); add(TextRotation); add(TextColour) }
                 is Layer.Shape -> { add(ShapeStroke); add(TextRotation); add(TextColour) }
+                is Layer.Smooth -> add(SmoothAmount)
+                is Layer.Heal -> add(HealSize)
                 is Layer.Look -> add(Intensity)
             }
             add(Opacity)
@@ -157,6 +168,8 @@ data class PerfectEditUiState(
     val pendingSelection: Mask? = null,
     /** Brush radius as a fraction of the image's shorter edge. */
     val brushRadius: Float = 0.12f,
+    /** Heal spot radius, likewise. Much smaller: a blemish is not a brush stroke. */
+    val healRadius: Float = 0.02f,
     val isSaving: Boolean = false,
     val ready: Boolean = false,
     val notice: String? = null,
@@ -487,6 +500,35 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 Layer.Shape(id = it, name = "$ordinal · ${kind.label}", mask = mask)
             }
 
+            EffectKind.Smooth -> state.document.add {
+                Layer.Smooth(id = it, name = "$ordinal · ${kind.label}", mask = mask)
+            }
+
+            EffectKind.Heal -> state.document.add {
+                Layer.Heal(id = it, name = "$ordinal · ${kind.label}", mask = mask)
+            }
+
+            // Presets, honestly: teeth and under-eyes are a saturation and a lift through a small
+            // brushed area, which the adjustment set already does. What they add is knowing which
+            // way to move the sliders.
+            EffectKind.Whiten -> state.document.add {
+                Layer.Tone(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    adjustments = ToneAdjustments(saturation = -45, exposure = 14),
+                    mask = mask,
+                )
+            }
+
+            EffectKind.Brighten -> state.document.add {
+                Layer.Tone(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    adjustments = ToneAdjustments(shadows = 32, exposure = 8),
+                    mask = mask,
+                )
+            }
+
             EffectKind.Gradient -> state.document.add {
                 Layer.Gradient(
                     id = it,
@@ -505,9 +547,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             EffectKind.Curve -> LayerControl.Opacity
             EffectKind.Text -> LayerControl.TextSize
             EffectKind.Shape -> LayerControl.ShapeStroke
+            EffectKind.Smooth -> LayerControl.SmoothAmount
+            EffectKind.Heal -> LayerControl.HealSize
+            EffectKind.Whiten, EffectKind.Brighten -> LayerControl.ToneExposure
             EffectKind.Tone -> LayerControl.ToneShadows
         }
-        _state.update { it.copy(pendingSelection = null, control = control) }
+        // The retouching presets are meant to be brushed onto a small area, so hand over the brush
+        // rather than leaving them applied to the whole face.
+        val tool = when (kind) {
+            EffectKind.Whiten, EffectKind.Brighten, EffectKind.Smooth -> SelectionTool.Brush
+            else -> state.selectionTool
+        }
+        _state.update { it.copy(pendingSelection = null, control = control, selectionTool = tool) }
         commit(document)
     }
 
@@ -586,6 +637,74 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             if (layer is Layer.Text) transform(layer) else layer
         }
         if (record) commit(document) else applyDocument(document, record = false)
+    }
+
+    fun onSmoothAmount(id: Long, amount: Int) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Smooth) layer.copy(amount = amount.coerceIn(0, 100)) else layer
+        }
+        applyDocument(document, record = false)
+    }
+
+    fun onHealRadius(radius: Float) =
+        _state.update { it.copy(healRadius = radius.coerceIn(0.005f, 0.08f)) }
+
+    /**
+     * Places one heal dab where the user tapped.
+     *
+     * The clean skin to borrow from is chosen **here**, once, and stored on the dab — not searched
+     * for again at render time, where a different resolution could land on a different patch and
+     * make the export disagree with the preview.
+     *
+     * It is chosen from the oriented preview rather than the composite, so reordering or hiding
+     * another layer later can't quietly change which skin a finished repair used.
+     */
+    fun onHealAt(x: Float, y: Float) {
+        val state = _state.value
+        val layer = state.document.selected as? Layer.Heal ?: return
+        val source = orientedPreview ?: return
+        val radius = state.healRadius
+
+        viewModelScope.launch {
+            val dab = withContext(Dispatchers.Default) {
+                runCatching {
+                    val width = source.width
+                    val height = source.height
+                    val pixels = IntArray(width * height)
+                    source.getPixels(pixels, 0, width, 0, 0, width, height)
+                    val spot = (radius * minOf(width, height)).roundToInt()
+                    Heal.chooseSource(
+                        pixels = pixels,
+                        width = width,
+                        height = height,
+                        x = (x * width).roundToInt(),
+                        y = (y * height).roundToInt(),
+                        radius = spot,
+                    )?.let { (sourceX, sourceY) ->
+                        HealDab(
+                            centre = MaskPoint(x, y),
+                            source = MaskPoint(sourceX.toFloat() / width, sourceY.toFloat() / height),
+                            radius = radius,
+                        )
+                    }
+                }.getOrNull()
+            }
+
+            if (dab == null) {
+                _state.update {
+                    it.copy(
+                        notice = "No clean skin close enough to borrow from. Try a smaller spot " +
+                            "size, or move in from the edge of the photo.",
+                    )
+                }
+                return@launch
+            }
+            commit(
+                _state.value.document.update(layer.id) { existing ->
+                    if (existing is Layer.Heal) existing.copy(dabs = existing.dabs + dab) else existing
+                },
+            )
+        }
     }
 
     fun onShapeKind(id: Long, kind: ShapeKind) = updateShape(id, record = true) { it.copy(kind = kind) }
