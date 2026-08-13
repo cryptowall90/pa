@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
@@ -88,6 +89,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pictureperfectx.app.capture.AspectRatio
 import com.pictureperfectx.app.capture.CropMath
 import com.pictureperfectx.app.capture.CropRect
+import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.layers.ColourTone
 import com.pictureperfectx.app.layers.GradientStyle
 import com.pictureperfectx.app.layers.Layer
@@ -957,6 +959,14 @@ private fun EffectsControls(
 
     ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
 
+    if (layer is Layer.Look) {
+        LookRow(
+            filters = viewModel.filters,
+            selectedId = layer.filterId,
+            onSelect = { viewModel.onLayerFilter(layer.id, it) },
+        )
+    }
+
     if (layer is Layer.Gradient &&
         (control == LayerControl.ColourFrom || control == LayerControl.ColourTo)
     ) {
@@ -1033,6 +1043,14 @@ private fun ControlSlider(
                 onChangeFinished = viewModel::commitLayerEdit,
             )
         }
+
+        control == LayerControl.Intensity && layer is Layer.Look -> ValueSlider(
+            value = layer.intensity.toFloat(),
+            range = 0f..100f,
+            readout = "${layer.intensity}",
+            onChange = { viewModel.onLayerIntensity(layer.id, it.roundToInt()) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
 
         control == LayerControl.Falloff && layer is Layer.Gradient -> {
             val midpoint = layer.spec.midpoint
@@ -1153,6 +1171,42 @@ private fun LayerRow(
                     onToggleVisible = { onToggleVisible(layer.id) },
                 )
             }
+        }
+    }
+}
+
+/**
+ * The hundred looks, as a scrolling row wearing their own colours.
+ *
+ * The swatch matters more than the name here: "Portra 400" tells you nothing at a glance, and the
+ * catalog has carried a start and end colour for every look since the camera got them.
+ */
+@Composable
+private fun LookRow(filters: List<Filter>, selectedId: String, onSelect: (String) -> Unit) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(filters, key = { it.id }) { filter ->
+            val isSelected = filter.id == selectedId
+            Text(
+                text = filter.displayName,
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Brush.horizontalGradient(listOf(filter.swatchStart, filter.swatchEnd)))
+                    .border(
+                        width = if (isSelected) 2.dp else 1.dp,
+                        color = if (isSelected) Brand else Color(0x33FFFFFF),
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                    .clickable { onSelect(filter.id) }
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+            )
         }
     }
 }

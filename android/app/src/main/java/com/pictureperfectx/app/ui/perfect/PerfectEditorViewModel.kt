@@ -16,6 +16,8 @@ import com.pictureperfectx.app.capture.PhotoSaver
 import com.pictureperfectx.app.capture.ToneAdjustments
 import com.pictureperfectx.app.capture.ToneBand
 import com.pictureperfectx.app.data.PhotoEntity
+import com.pictureperfectx.app.filter.Filter
+import com.pictureperfectx.app.filter.FilterCatalog
 import com.pictureperfectx.app.layers.BlendMode
 import com.pictureperfectx.app.layers.ColourTone
 import com.pictureperfectx.app.layers.Document
@@ -57,6 +59,7 @@ enum class EditorPanel(val label: String) {
 /** An effect the user can add, as offered by the effects picker. */
 enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
+    Look("Look", "One of a hundred film and colour looks."),
     Gradient("Gradient", "A wash of colour across the photo."),
 }
 
@@ -79,6 +82,7 @@ enum class LayerControl(val label: String) {
     Highlights("Highlights"),
     Whites("Whites"),
     Blur("Blur"),
+    Intensity("Strength"),
     Opacity("Opacity"),
     Feather("Feather"),
     Falloff("Falloff"),
@@ -103,7 +107,7 @@ enum class LayerControl(val label: String) {
                 is Layer.Tone -> { add(Blacks); add(Shadows); add(Highlights); add(Whites) }
                 is Layer.Blur -> add(Blur)
                 is Layer.Gradient -> { add(ColourFrom); add(ColourTo); add(Falloff) }
-                is Layer.Look -> Unit
+                is Layer.Look -> add(Intensity)
             }
             add(Opacity)
             // Feathering an area that doesn't exist is a slider that does nothing.
@@ -183,6 +187,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // What the live area looked like when a gradient drag began; see onGradientStart.
     private var gradientBase: Mask? = null
+
+    /**
+     * The look catalog, shared with the chooser so both name the same thing.
+     *
+     * All hundred have shipped in the APK since the camera got them, and the layer renderer has
+     * always known how to apply one — nothing ever built a layer that used them.
+     */
+    val filters: List<Filter> by lazy { FilterCatalog.load(getApplication()) }
 
     // Undo holds whole documents; a Document stores descriptions rather than pixels, so snapshots
     // are cheap enough for that to be the simplest correct approach.
@@ -420,6 +432,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
+            // Not Original: that one is a passthrough with no lookup table, so a layer using it
+            // would render nothing and read as broken on arrival.
+            EffectKind.Look -> state.document.add {
+                Layer.Look(
+                    id = it,
+                    name = "$ordinal · ${kind.label}",
+                    filterId = filters.firstOrNull { filter -> !filter.isOriginal }?.id
+                        ?: Filter.ORIGINAL_ID,
+                    mask = mask,
+                )
+            }
+
             EffectKind.Gradient -> state.document.add {
                 Layer.Gradient(
                     id = it,
@@ -432,7 +456,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
-        val control = if (kind == EffectKind.Gradient) LayerControl.ColourFrom else LayerControl.Shadows
+        val control = when (kind) {
+            EffectKind.Gradient -> LayerControl.ColourFrom
+            EffectKind.Look -> LayerControl.Intensity
+            EffectKind.Tone -> LayerControl.Shadows
+        }
         _state.update { it.copy(pendingSelection = null, control = control) }
         commit(document)
     }
@@ -486,6 +514,20 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onLayerBlurRadius(id: Long, radius: Int) {
         val document = _state.value.document.update(id) { layer ->
             if (layer is Layer.Blur) layer.copy(radius = radius.coerceIn(1, 60)) else layer
+        }
+        applyDocument(document, record = false)
+    }
+
+    fun onLayerFilter(id: Long, filterId: String) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Look) layer.copy(filterId = filterId) else layer
+        }
+        commit(document)
+    }
+
+    fun onLayerIntensity(id: Long, intensity: Int) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Look) layer.copy(intensity = intensity.coerceIn(0, 100)) else layer
         }
         applyDocument(document, record = false)
     }
