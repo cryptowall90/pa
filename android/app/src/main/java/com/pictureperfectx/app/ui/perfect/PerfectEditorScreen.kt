@@ -107,6 +107,7 @@ import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskOutline
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
+import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
 import com.pictureperfectx.app.ui.components.CameraNotice
 import kotlin.math.min
@@ -807,7 +808,11 @@ private fun handlesOf(state: PerfectEditUiState): List<MaskPoint> {
     if (!state.canSelect) return emptyList()
     // A content layer's handle is its own, not its mask's — and it stays draggable whichever
     // selection tool happens to be in hand, since it isn't a selection.
-    (state.document.selected as? Layer.Text)?.let { return listOf(it.centre) }
+    when (val selected = state.document.selected) {
+        is Layer.Text -> return listOf(selected.centre)
+        is Layer.Shape -> return listOf(selected.centre, selected.corner)
+        else -> Unit
+    }
     if (state.selectionTool == SelectionTool.Brush) return emptyList()
     val mask = state.activeMask ?: return emptyList()
     mask.gradient?.let { return listOf(it.start, it.end) }
@@ -1014,6 +1019,28 @@ private fun EffectsControls(
         }
     }
 
+    if (layer is Layer.Shape) {
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(ShapeKind.entries.toList(), key = { it.name }) { kind ->
+                PanelChip(label = kind.label, isSelected = kind == layer.kind) {
+                    viewModel.onShapeKind(layer.id, kind)
+                }
+            }
+            items(
+                ColourTone.entries.filter { it != ColourTone.Clear },
+                key = { "tone-" + it.name },
+            ) { tone ->
+                PanelChip(label = tone.label, isSelected = tone == layer.colour.tone) {
+                    viewModel.onShapeTone(layer.id, tone)
+                }
+            }
+        }
+    }
+
     if (layer is Layer.Curve) {
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
@@ -1147,6 +1174,34 @@ private fun ControlSlider(
                 layer.colour.tone.label
             },
             onChange = { viewModel.onTextHue(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.ShapeStroke && layer is Layer.Shape -> ValueSlider(
+            value = layer.stroke,
+            range = 0f..0.1f,
+            readout = if (layer.stroke <= 0f) "Fill" else "${(layer.stroke * 100).roundToInt()}",
+            onChange = { viewModel.onShapeStroke(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.TextRotation && layer is Layer.Shape -> ValueSlider(
+            value = layer.rotation,
+            range = -180f..180f,
+            readout = "${layer.rotation.roundToInt()}°",
+            onChange = { viewModel.onShapeRotation(layer.id, it) },
+            onChangeFinished = viewModel::commitLayerEdit,
+        )
+
+        control == LayerControl.TextColour && layer is Layer.Shape -> ValueSlider(
+            value = layer.colour.hue,
+            range = 0f..360f,
+            readout = if (layer.colour.tone == ColourTone.Hue) {
+                "${layer.colour.hue.roundToInt()}°"
+            } else {
+                layer.colour.tone.label
+            },
+            onChange = { viewModel.onShapeHue(layer.id, it) },
             onChangeFinished = viewModel::commitLayerEdit,
         )
 

@@ -264,6 +264,33 @@ sealed interface Layer {
     ) : Layer
 
     /**
+     * A rectangle, ellipse or line drawn over the photo.
+     *
+     * Content like [Text], and placed the same way: a centre, a size as fractions of the frame, and
+     * a rotation. Two handles — the centre to move it, a corner to size it.
+     */
+    data class Shape(
+        override val id: Long,
+        override val name: String = "Shape",
+        override val isVisible: Boolean = true,
+        override val opacity: Float = 1f,
+        override val blend: BlendMode = BlendMode.Normal,
+        override val mask: Mask = Mask(),
+        val kind: ShapeKind = ShapeKind.Rectangle,
+        val centre: MaskPoint = MaskPoint(0.5f, 0.5f),
+        val width: Float = 0.4f,
+        val height: Float = 0.3f,
+        val rotation: Float = 0f,
+        val colour: GradientColour = GradientColour(tone = ColourTone.White),
+        /** Outline width as a fraction of the shorter edge; 0 fills the shape instead. */
+        val stroke: Float = 0f,
+    ) : Layer {
+        /** Where the sizing handle sits: the corner of the box, before any rotation. */
+        val corner: MaskPoint
+            get() = MaskPoint(centre.x + width / 2f, centre.y + height / 2f)
+    }
+
+    /**
      * A tone curve per channel.
      *
      * The colour channels are what make this colour grading rather than only contrast: lifting red
@@ -340,6 +367,14 @@ fun Layer.withCommon(
     is Layer.Gradient -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Curve -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
     is Layer.Text -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Shape -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+}
+
+/** A line has no inside, so it is always stroked whatever the stroke width says. */
+enum class ShapeKind(val label: String) {
+    Rectangle("Rectangle"),
+    Ellipse("Ellipse"),
+    Line("Line"),
 }
 
 /**

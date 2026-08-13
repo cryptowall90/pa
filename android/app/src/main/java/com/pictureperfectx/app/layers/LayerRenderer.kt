@@ -41,6 +41,9 @@ object LayerRenderer {
     /** A colour gradient is a smooth ramp, so it is generated small and scaled up. */
     private const val GRADIENT_WORKING_EDGE = 512
 
+    /** A stroked shape asked for no width still needs one, or it draws nothing at all. */
+    private const val MIN_STROKE = 0.004f
+
     fun render(context: Context, base: Bitmap, document: Document): Bitmap {
         val layers = document.renderable()
         if (layers.isEmpty()) return base
@@ -82,6 +85,8 @@ object LayerRenderer {
         is Layer.Gradient -> gradient(source, layer)
 
         is Layer.Text -> text(source, layer)
+
+        is Layer.Shape -> shape(source, layer)
 
         // One pass however many channels are bent: the filter bakes all four splines into a single
         // lookup texture and the shader takes one sample per channel.
@@ -138,6 +143,62 @@ object LayerRenderer {
             centreY - (lines.size - 1) * lineHeight / 2f - (paint.ascent() + paint.descent()) / 2f
         lines.forEachIndexed { index, line ->
             canvas.drawText(line, centreX, firstBaseline + index * lineHeight, paint)
+        }
+        canvas.restore()
+        return bitmap
+    }
+
+    /** Draws the shape onto a transparent bitmap the size of the photo. */
+    private fun shape(source: Bitmap, layer: Layer.Shape): Bitmap? {
+        if (layer.width <= 0f && layer.height <= 0f) return null
+        val bitmap = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val shortEdge = minOf(source.width, source.height)
+        val strokeWidth = layer.stroke * shortEdge
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = layer.colour.toArgb()
+            // A line has no interior to fill, so it ignores a stroke of zero rather than vanishing.
+            style = if (strokeWidth > 0f || layer.kind == ShapeKind.Line) {
+                Paint.Style.STROKE
+            } else {
+                Paint.Style.FILL
+            }
+            this.strokeWidth = if (strokeWidth > 0f) strokeWidth else shortEdge * MIN_STROKE
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        val centreX = layer.centre.x * source.width
+        val centreY = layer.centre.y * source.height
+        val halfWidth = layer.width * source.width / 2f
+        val halfHeight = layer.height * source.height / 2f
+
+        canvas.save()
+        canvas.rotate(layer.rotation, centreX, centreY)
+        when (layer.kind) {
+            ShapeKind.Rectangle -> canvas.drawRect(
+                centreX - halfWidth,
+                centreY - halfHeight,
+                centreX + halfWidth,
+                centreY + halfHeight,
+                paint,
+            )
+
+            ShapeKind.Ellipse -> canvas.drawOval(
+                centreX - halfWidth,
+                centreY - halfHeight,
+                centreX + halfWidth,
+                centreY + halfHeight,
+                paint,
+            )
+
+            // Drawn corner to corner of the same box, so one set of handles places all three.
+            ShapeKind.Line -> canvas.drawLine(
+                centreX - halfWidth,
+                centreY - halfHeight,
+                centreX + halfWidth,
+                centreY + halfHeight,
+                paint,
+            )
         }
         canvas.restore()
         return bitmap

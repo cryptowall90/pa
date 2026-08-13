@@ -36,7 +36,9 @@ import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskLasso
 import com.pictureperfectx.app.layers.MaskPoint
 import com.pictureperfectx.app.layers.SelectionMode
+import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -67,6 +69,7 @@ enum class EffectKind(val label: String, val description: String) {
     Look("Look", "One of a hundred film and colour looks."),
     Curve("Curve", "Tone curves, per channel, for contrast and grading."),
     Text("Text", "Words on the photo."),
+    Shape("Shape", "A rectangle, ellipse or line."),
     Gradient("Gradient", "A wash of colour across the photo."),
 }
 
@@ -103,6 +106,7 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
     TextSize("Size"),
     TextRotation("Rotate"),
     TextColour("Colour"),
+    ShapeStroke("Outline"),
     BrushSize("Brush size");
 
     companion object {
@@ -117,6 +121,7 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
                 // A curve's control is the graph itself, not a slider.
                 is Layer.Curve -> Unit
                 is Layer.Text -> { add(TextSize); add(TextRotation); add(TextColour) }
+                is Layer.Shape -> { add(ShapeStroke); add(TextRotation); add(TextColour) }
                 is Layer.Look -> add(Intensity)
             }
             add(Opacity)
@@ -478,6 +483,10 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 Layer.Text(id = it, name = "$ordinal · ${kind.label}", mask = mask)
             }
 
+            EffectKind.Shape -> state.document.add {
+                Layer.Shape(id = it, name = "$ordinal · ${kind.label}", mask = mask)
+            }
+
             EffectKind.Gradient -> state.document.add {
                 Layer.Gradient(
                     id = it,
@@ -495,6 +504,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             EffectKind.Look -> LayerControl.Intensity
             EffectKind.Curve -> LayerControl.Opacity
             EffectKind.Text -> LayerControl.TextSize
+            EffectKind.Shape -> LayerControl.ShapeStroke
             EffectKind.Tone -> LayerControl.ToneShadows
         }
         _state.update { it.copy(pendingSelection = null, control = control) }
@@ -574,6 +584,27 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun updateText(id: Long, record: Boolean, transform: (Layer.Text) -> Layer.Text) {
         val document = _state.value.document.update(id) { layer ->
             if (layer is Layer.Text) transform(layer) else layer
+        }
+        if (record) commit(document) else applyDocument(document, record = false)
+    }
+
+    fun onShapeKind(id: Long, kind: ShapeKind) = updateShape(id, record = true) { it.copy(kind = kind) }
+
+    fun onShapeStroke(id: Long, stroke: Float) =
+        updateShape(id, record = false) { it.copy(stroke = stroke.coerceIn(0f, 0.1f)) }
+
+    fun onShapeRotation(id: Long, degrees: Float) =
+        updateShape(id, record = false) { it.copy(rotation = degrees.coerceIn(-180f, 180f)) }
+
+    fun onShapeHue(id: Long, hue: Float) =
+        updateShape(id, record = false) { it.copy(colour = it.colour.copy(hue = hue.coerceIn(0f, 360f))) }
+
+    fun onShapeTone(id: Long, tone: ColourTone) =
+        updateShape(id, record = true) { it.copy(colour = it.colour.copy(tone = tone)) }
+
+    private fun updateShape(id: Long, record: Boolean, transform: (Layer.Shape) -> Layer.Shape) {
+        val document = _state.value.document.update(id) { layer ->
+            if (layer is Layer.Shape) transform(layer) else layer
         }
         if (record) commit(document) else applyDocument(document, record = false)
     }
@@ -816,10 +847,30 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * out from under the finger holding it.
      */
     fun onMoveHandle(index: Int, point: MaskPoint) {
-        // Content layers put their own handle on the canvas rather than the mask's.
-        (_state.value.document.selected as? Layer.Text)?.let { text ->
-            updateText(text.id, record = false) { it.copy(centre = point) }
-            return
+        // Content layers put their own handles on the canvas rather than the mask's.
+        when (val selected = _state.value.document.selected) {
+            is Layer.Text -> {
+                updateText(selected.id, record = false) { it.copy(centre = point) }
+                return
+            }
+
+            is Layer.Shape -> {
+                updateShape(selected.id, record = false) {
+                    // Handle 0 moves the box; handle 1 is the corner, which sizes it about the
+                    // centre so the shape grows evenly rather than crawling across the photo.
+                    if (index == 0) {
+                        it.copy(centre = point)
+                    } else {
+                        it.copy(
+                            width = (abs(point.x - it.centre.x) * 2f).coerceIn(0.01f, 2f),
+                            height = (abs(point.y - it.centre.y) * 2f).coerceIn(0.01f, 2f),
+                        )
+                    }
+                }
+                return
+            }
+
+            else -> Unit
         }
         val current = _state.value.activeMask ?: return
         val gradient = current.gradient
