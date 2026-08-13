@@ -515,6 +515,29 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         applyDocument(document, record = false)
     }
 
+    /** Swaps inside for outside, so lassoing a subject can adjust everything except it. */
+    fun onInvertMask() {
+        val state = _state.value
+        val current = state.activeMask ?: return
+        applySelection(state, state.document.selected, current.copy(inverted = !current.inverted), record = true)
+    }
+
+    /**
+     * Drops the area, putting the layer back to covering the whole photo.
+     *
+     * The only way out of an area other than undo, which is no help once you've made other edits
+     * since. On a layer it's an empty mask; before one, the pending selection simply goes.
+     */
+    fun onClearMask() {
+        val state = _state.value
+        val layer = state.document.selected
+        if (layer == null) {
+            _state.update { it.copy(pendingSelection = null) }
+            return
+        }
+        commit(state.document.setMask(layer.id, Mask()))
+    }
+
     fun onLayerFilter(id: Long, filterId: String) {
         val document = _state.value.document.update(id) { layer ->
             if (layer is Layer.Look) layer.copy(filterId = filterId) else layer

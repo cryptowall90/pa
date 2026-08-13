@@ -1131,6 +1131,18 @@ private fun SelectionChips(
                 onClick = viewModel::onCycleSelectionMode,
             )
         }
+        // Only with an area to act on: inverting an empty mask means "cover nothing", which would
+        // silently make the layer vanish rather than doing anything anyone asked for.
+        if (state.activeMask != null) {
+            item {
+                PanelChip(
+                    label = "Invert",
+                    isSelected = state.activeMask?.inverted == true,
+                    onClick = viewModel::onInvertMask,
+                )
+            }
+            item { PanelChip(label = "Clear", onClick = viewModel::onClearMask) }
+        }
         if (layer != null) {
             item { PanelChip(label = layer.blend.label) { viewModel.onCycleBlend(layer.id) } }
             item { PanelChip(label = "Up") { viewModel.onMoveLayer(layer.id, up = true) } }
