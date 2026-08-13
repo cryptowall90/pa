@@ -57,7 +57,7 @@ object MaskBrush {
         }
         // A brushed edge has no points to drag, so any lasso this mask started as stops describing
         // it. Keeping the polygon would put handles on a shape that has moved out from under them.
-        return mask.copy(coverage = coverage, path = null)
+        return mask.copy(coverage = coverage, path = null, gradient = null)
     }
 
     /** 1 at the centre, falling to 0 at the rim over the outer [SOFT_EDGE] of the radius. */

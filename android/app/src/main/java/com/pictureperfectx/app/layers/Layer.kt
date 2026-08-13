@@ -41,6 +41,12 @@ data class Mask(
      * can be dragged.
      */
     val path: List<MaskPoint>? = null,
+    /**
+     * The gradient that produced this coverage, kept on the same terms as [path] and never
+     * alongside it — a mask is described by a polygon, or by a gradient, or by neither once it has
+     * been brushed or combined into something no single shape accounts for.
+     */
+    val gradient: GradientSpec? = null,
 ) {
     val isEmpty: Boolean get() = coverage.isEmpty()
 
@@ -115,7 +121,7 @@ data class Mask(
         if (this === other) return true
         if (other !is Mask) return false
         return columns == other.columns && rows == other.rows && feather == other.feather &&
-            inverted == other.inverted && path == other.path &&
+            inverted == other.inverted && path == other.path && gradient == other.gradient &&
             coverage.contentEquals(other.coverage)
     }
 
@@ -125,6 +131,7 @@ data class Mask(
         result = 31 * result + feather.hashCode()
         result = 31 * result + inverted.hashCode()
         result = 31 * result + path.hashCode()
+        result = 31 * result + gradient.hashCode()
         result = 31 * result + coverage.contentHashCode()
         return result
     }

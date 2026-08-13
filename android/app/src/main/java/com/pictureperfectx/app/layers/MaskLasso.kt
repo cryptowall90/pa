@@ -84,7 +84,7 @@ object MaskLasso {
         // A fresh lasso *is* the area, so its points are worth keeping to drag later. Adding or
         // subtracting leaves a shape this polygon no longer describes, so the old one is dropped.
         val kept = if (mode == SelectionMode.Replace) PathSimplify.simplify(path) else null
-        return mask.copy(coverage = combined, path = kept)
+        return mask.copy(coverage = combined, path = kept, gradient = null)
     }
 
     /** Where the closed polygon crosses the horizontal line at [y], in normalized x. */
