@@ -89,6 +89,28 @@ class EditHandlesTest {
     }
 
     @Test
+    fun `a gradient layer offers its area first and its own ramp last`() {
+        // Both are draggable and they mean different things: the area says where the wash lands,
+        // the ramp says which way the colour runs inside it. The ramp goes last so the area's
+        // handles keep the indices they have for every other layer.
+        val area = lassoed()
+        val spec = GradientSpec(start = MaskPoint(0.4f, 0.3f), end = MaskPoint(0.6f, 0.7f))
+        val layer = Layer.Gradient(id = 1, spec = spec, mask = area)
+        val handles = editHandles(editing(layer = layer))
+
+        assertEquals(area.path!! + listOf(spec.start, spec.end), handles)
+        assertEquals(spec.start, handles[handles.size - 2])
+        assertEquals(spec.end, handles.last())
+    }
+
+    @Test
+    fun `a gradient layer with no area drawn is placed by its ramp alone`() {
+        val spec = GradientSpec(start = MaskPoint(0.1f, 0.1f), end = MaskPoint(0.9f, 0.9f))
+        val layer = Layer.Gradient(id = 1, spec = spec)
+        assertEquals(listOf(spec.start, spec.end), editHandles(editing(layer = layer)))
+    }
+
+    @Test
     fun `an unmasked layer with no shape of its own has nothing to drag`() {
         assertTrue(editHandles(editing(layer = Layer.Tone(id = 1))).isEmpty())
     }

@@ -224,11 +224,19 @@ data class PerfectEditUiState(
  */
 fun editHandles(state: PerfectEditUiState): List<MaskPoint> {
     if (!state.canSelect) return emptyList()
-    when (val selected = state.document.selected) {
-        is Layer.Text -> return listOf(selected.centre)
-        is Layer.Shape -> return listOf(selected.centre, selected.corner)
-        else -> Unit
+    return when (val selected = state.document.selected) {
+        is Layer.Text -> listOf(selected.centre)
+        is Layer.Shape -> listOf(selected.centre, selected.corner)
+        // A gradient layer has two shapes worth dragging, and they mean different things: the area
+        // says where the wash lands, its own ramp says which way the colour runs inside it. The
+        // ramp goes last so an area's handles keep the indices they have for every other layer.
+        is Layer.Gradient -> areaHandles(state) + listOf(selected.spec.start, selected.spec.end)
+        else -> areaHandles(state)
     }
+}
+
+/** The handles belonging to the area itself: a fade's two ends, or the points a lasso kept. */
+internal fun areaHandles(state: PerfectEditUiState): List<MaskPoint> {
     val mask = state.activeMask ?: return emptyList()
     mask.gradient?.let { return listOf(it.start, it.end) }
     return mask.path.orEmpty()
@@ -582,10 +590,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 Layer.Gradient(
                     id = it,
                     name = "$ordinal · ${kind.label}",
-                    // Top-down and fading out: a sunset wash, the commonest thing this is for, and
-                    // visible the moment it is added rather than needing to be placed first.
-                    spec = GradientSpec(start = MaskPoint(0.5f, 0f), end = MaskPoint(0.5f, 0.7f)),
-                    blend = BlendMode.Multiply,
+                    // Down the middle of whatever area was drawn, so a gradient added after a lasso
+                    // ramps across the selection instead of running off the edge of it. With no
+                    // area: top-down and fading out, a sunset wash, the commonest thing this is for.
+                    spec = mask.coveredBounds()?.let { bounds ->
+                        GradientSpec(
+                            start = MaskPoint(bounds.centreX, bounds.top),
+                            end = MaskPoint(bounds.centreX, bounds.bottom),
+                        )
+                    } ?: GradientSpec(start = MaskPoint(0.5f, 0f), end = MaskPoint(0.5f, 0.7f)),
+                    // Normal, not Multiply: a wash has to be visibly there the moment it arrives,
+                    // and Multiply is one chip away for anyone who wants it shading instead.
+                    blend = BlendMode.Normal,
                     mask = mask,
                 )
             }
@@ -1065,6 +1081,19 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 return
+            }
+
+            is Layer.Gradient -> {
+                // Its own ramp is appended after the area's handles by editHandles, so anything
+                // past the end of that list is one of the two ends of the wash.
+                val area = areaHandles(_state.value).size
+                if (index >= area) {
+                    val end = point
+                    onGradientLayerSpec(selected.id) {
+                        if (index == area) it.copy(start = end) else it.copy(end = end)
+                    }
+                    return
+                }
             }
 
             else -> Unit

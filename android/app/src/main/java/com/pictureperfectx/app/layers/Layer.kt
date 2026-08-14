@@ -115,6 +115,41 @@ data class Mask(
         }
     }
 
+    /**
+     * The normalized box around everything this mask covers, or null when it covers nothing.
+     *
+     * What it is for: placing something *inside* an area that was already drawn. A gradient added
+     * after a lasso should run across the selection, not across the whole frame with most of its
+     * ramp clipped away outside.
+     *
+     * An empty mask is null rather than the whole frame. It renders as "applies everywhere", but
+     * here the question is where the user pointed, and an empty mask is them not having pointed.
+     */
+    fun coveredBounds(threshold: Float = COVERED_THRESHOLD): MaskBounds? {
+        if (isEmpty) return null
+        var left = columns
+        var top = rows
+        var right = -1
+        var bottom = -1
+        for (row in 0 until rows) {
+            for (column in 0 until columns) {
+                if (coverageAt(column, row) <= threshold) continue
+                if (column < left) left = column
+                if (column > right) right = column
+                if (row < top) top = row
+                if (row > bottom) bottom = row
+            }
+        }
+        if (right < left || bottom < top) return null
+        // Cell edges rather than centres, so the box contains the covered cells whole.
+        return MaskBounds(
+            left = left.toFloat() / columns,
+            top = top.toFloat() / rows,
+            right = (right + 1).toFloat() / columns,
+            bottom = (bottom + 1).toFloat() / rows,
+        )
+    }
+
     // FloatArray gives this data class identity semantics for equals/hashCode, which would break
     // undo comparisons and recomposition; compare the contents instead.
     override fun equals(other: Any?): Boolean {
@@ -147,6 +182,9 @@ data class Mask(
 
         /** A drawn edge should read as deliberate, so selections feather less than a brushed mask. */
         const val SELECTION_FEATHER = 0.12f
+
+        /** Below this a cell is the soft edge of an area rather than part of it. */
+        private const val COVERED_THRESHOLD = 0.02f
 
         /** Blur radius at full feather, as a share of the grid's long axis. */
         private const val FEATHER_FRACTION = 0.08f
@@ -183,6 +221,17 @@ data class Mask(
             )
         }
     }
+}
+
+/** The normalized box around a covered area, in the same 0..1 space masks and points use. */
+data class MaskBounds(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+) {
+    val centreX: Float get() = (left + right) / 2f
+    val centreY: Float get() = (top + bottom) / 2f
 }
 
 /**

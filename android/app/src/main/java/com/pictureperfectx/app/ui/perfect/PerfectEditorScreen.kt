@@ -661,6 +661,9 @@ private fun DrawingLayer(
     val curve = remember(mask) { mask?.path?.let { PathCurve.smooth(it) }.orEmpty() }
     val handles = editHandles(state)
     val gradient = mask?.gradient
+    // A gradient layer's own wash runs along its spec, which is a different thing from the area it
+    // applies through — both get an axis, or dragging the handles would be guesswork.
+    val ramp = (state.document.selected as? Layer.Gradient)?.spec
 
     Canvas(modifier = modifier) {
         if (bounds.width <= 0f || bounds.height <= 0f) return@Canvas
@@ -706,18 +709,20 @@ private fun DrawingLayer(
 
         // A gradient's contour is only its halfway line, which says nothing about which way it
         // runs. The axis does.
-        if (gradient != null) {
-            val from = onScreen(gradient.start)
-            val to = onScreen(gradient.end)
-            drawLine(Color(0xCC000000), from, to, 3.dp.toPx())
+        fun axis(from: MaskPoint, to: MaskPoint) {
+            val start = onScreen(from)
+            val end = onScreen(to)
+            drawLine(Color(0xCC000000), start, end, 3.dp.toPx())
             drawLine(
                 color = Brand,
-                start = from,
-                end = to,
+                start = start,
+                end = end,
                 strokeWidth = 1.5.dp.toPx(),
                 pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 6f)),
             )
         }
+        gradient?.let { axis(it.start, it.end) }
+        ramp?.let { axis(it.start, it.end) }
 
         handles.forEach { point ->
             val screen = onScreen(point)
