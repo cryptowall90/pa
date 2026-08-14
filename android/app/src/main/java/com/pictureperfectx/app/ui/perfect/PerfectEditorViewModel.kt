@@ -81,11 +81,17 @@ enum class EffectKind(val label: String, val description: String) {
     Fill("Fill", "A flat colour inside your selection."),
 }
 
-/** How an area is chosen: drawn round, painted in by hand, or faded across the frame. */
+/**
+ * How an area is chosen: drawn round, painted in by hand, or faded across the frame.
+ *
+ * [Fade] rather than "Gradient": it shapes *where* an effect applies, while the Gradient effect is a
+ * wash of colour. Two things called the same thing, one a tool and one a layer, read as one thing
+ * that doesn't work.
+ */
 enum class SelectionTool(val label: String) {
     Lasso("Lasso"),
     Brush("Brush"),
-    Gradient("Gradient"),
+    Fade("Fade"),
 }
 
 /**
@@ -202,6 +208,30 @@ data class PerfectEditUiState(
     /** The area currently being edited: the selected layer's, or the one drawn ahead of a layer. */
     val activeMask: Mask?
         get() = document.selected?.mask?.takeUnless { it.isEmpty } ?: pendingSelection
+}
+
+/**
+ * The draggable points on the photo, in the order the canvas draws them.
+ *
+ * One function rather than two, because a handle is dragged by *index*: the screen decides where
+ * they are drawn and the view model decides what a drag means, and if the two ever disagreed about
+ * the order, dragging one handle would move a different one. Kept out of the view model class so a
+ * unit test can hold it to that order without an Android runtime.
+ *
+ * What they are: a text or shape layer's own placement, a gradient area's two ends, or the points a
+ * lasso kept. A brushed area has none, since no shape describes it — but a lassoed one keeps its
+ * points whichever tool happens to be in hand afterwards.
+ */
+fun editHandles(state: PerfectEditUiState): List<MaskPoint> {
+    if (!state.canSelect) return emptyList()
+    when (val selected = state.document.selected) {
+        is Layer.Text -> return listOf(selected.centre)
+        is Layer.Shape -> return listOf(selected.centre, selected.corner)
+        else -> Unit
+    }
+    val mask = state.activeMask ?: return emptyList()
+    mask.gradient?.let { return listOf(it.start, it.end) }
+    return mask.path.orEmpty()
 }
 
 /**
@@ -573,9 +603,13 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             EffectKind.Tone -> LayerControl.ToneShadows
         }
         // The retouching presets are meant to be brushed onto a small area, so hand over the brush
-        // rather than leaving them applied to the whole face.
-        val tool = when (kind) {
-            EffectKind.Whiten, EffectKind.Brighten, EffectKind.Smooth -> SelectionTool.Brush
+        // rather than leaving them applied to the whole face — but only when no area was drawn
+        // first. Someone who lassoed the area already said where it goes, and switching tools under
+        // them would put their lasso away mid-edit.
+        val tool = when {
+            !mask.isEmpty -> state.selectionTool
+            kind == EffectKind.Whiten || kind == EffectKind.Brighten || kind == EffectKind.Smooth ->
+                SelectionTool.Brush
             else -> state.selectionTool
         }
         _state.update { it.copy(pendingSelection = null, control = control, selectionTool = tool) }

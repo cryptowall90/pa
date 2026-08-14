@@ -508,7 +508,7 @@ private fun EditorStage(
         // The gesture block outlives recompositions, so these are read through the latest state
         // rather than captured — otherwise a pan would be mapped against the bounds from before it.
         val latestBounds by rememberUpdatedState(bounds)
-        val latestHandles by rememberUpdatedState(handlesOf(state))
+        val latestHandles by rememberUpdatedState(editHandles(state))
         val canSelect = state.canSelect
         val tool = state.selectionTool
         val healing = state.document.selected is Layer.Heal
@@ -553,7 +553,7 @@ private fun EditorStage(
                                     tracing = true
                                     trace = listOf(first.position)
                                 }
-                                tool == SelectionTool.Gradient -> {
+                                tool == SelectionTool.Fade -> {
                                     sweeping = true
                                     gradientStart = first.position.normalizedIn(latestBounds)
                                     onGradientStart()
@@ -659,7 +659,7 @@ private fun DrawingLayer(
     }
     // The same curve the mask was filled from, so the outline is the edge rather than near it.
     val curve = remember(mask) { mask?.path?.let { PathCurve.smooth(it) }.orEmpty() }
-    val handles = handlesOf(state)
+    val handles = editHandles(state)
     val gradient = mask?.gradient
 
     Canvas(modifier = modifier) {
@@ -814,24 +814,6 @@ private fun paintAt(position: Offset, bounds: Rect, onPaint: (Float, Float) -> U
     if (point.x in 0f..1f && point.y in 0f..1f) onPaint(point.x, point.y)
 }
 
-/**
- * The draggable points of whatever describes the active area: a lasso's simplified vertices, or a
- * gradient's strong and far ends. A brushed area has neither, since no shape describes it.
- */
-private fun handlesOf(state: PerfectEditUiState): List<MaskPoint> {
-    if (!state.canSelect) return emptyList()
-    // A content layer's handle is its own, not its mask's — and it stays draggable whichever
-    // selection tool happens to be in hand, since it isn't a selection.
-    when (val selected = state.document.selected) {
-        is Layer.Text -> return listOf(selected.centre)
-        is Layer.Shape -> return listOf(selected.centre, selected.corner)
-        else -> Unit
-    }
-    if (state.selectionTool == SelectionTool.Brush) return emptyList()
-    val mask = state.activeMask ?: return emptyList()
-    mask.gradient?.let { return listOf(it.start, it.end) }
-    return mask.path.orEmpty()
-}
 
 /** The index of the handle [position] grabbed, or -1. */
 private fun handleAt(path: List<MaskPoint>, position: Offset, bounds: Rect, radius: Float): Int {
@@ -918,9 +900,9 @@ private fun EffectsControls(
         )
     }
 
-    // Only while the gradient tool is in hand — five more chips permanently on screen would undo
-    // the height the photo was given.
-    if (state.selectionTool == SelectionTool.Gradient) {
+    // Only while the fade tool is in hand — five more chips permanently on screen would undo the
+    // height the photo was given.
+    if (state.selectionTool == SelectionTool.Fade) {
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 20.dp),
@@ -966,8 +948,8 @@ private fun EffectsControls(
         }
         Text(
             text = if (state.pendingSelection == null) {
-                if (state.selectionTool == SelectionTool.Gradient) {
-                    "Drag across the photo, then add an effect to fade it in along the gradient."
+                if (state.selectionTool == SelectionTool.Fade) {
+                    "Drag across the photo, then add an effect to fade it in along the run."
                 } else {
                     "Draw around an area, then add an effect to apply it only there."
                 }
