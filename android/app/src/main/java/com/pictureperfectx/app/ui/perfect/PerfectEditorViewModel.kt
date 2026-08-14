@@ -971,9 +971,9 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         if (path.size < 3) return
         val state = _state.value
         val layer = state.document.selected
-        val filled = MaskLasso.fill(
+        val filled = MaskLasso.trace(
             mask = selectionBase(state, layer, state.selectionMode),
-            path = path,
+            drawn = path,
             mode = state.selectionMode,
         )
         applySelection(state, layer, filled, record = true)
@@ -1003,11 +1003,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Drags one point of a lasso and refills the area from the whole polygon.
+     * Drags one point of a lasso and redraws the area from the whole shape.
      *
-     * The moved path is written back verbatim rather than letting the fill re-simplify it — a point
-     * dragged into line with its neighbours would otherwise be dropped mid-drag, taking the handle
-     * out from under the finger holding it.
+     * Deliberately [MaskLasso.shape] rather than a fresh trace: re-simplifying mid-drag would drop
+     * a point dragged into line with its neighbours, taking the handle out from under the finger
+     * holding it.
      */
     fun onMoveHandle(index: Int, point: MaskPoint) {
         // Content layers put their own handles on the canvas rather than the mask's.
@@ -1056,12 +1056,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         if (index !in path.indices) return
 
         val moved = path.toMutableList().also { it[index] = point }
-        val refilled = MaskLasso.fill(
+        val redrawn = MaskLasso.shape(
             mask = Mask.forRatio(state.canvasRatio).copy(feather = current.feather),
-            path = moved,
-            mode = SelectionMode.Replace,
+            handles = moved,
         )
-        applySelection(state, layer, refilled.copy(path = moved), record = false)
+        applySelection(state, layer, redrawn, record = false)
     }
 
     fun endStroke() = commit(_state.value.document)

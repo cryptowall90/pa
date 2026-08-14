@@ -155,7 +155,7 @@ class MaskGradientTest {
     fun `a gradient replaces a lasso's points rather than sitting alongside them`() {
         // A mask is described by a polygon, or by a gradient, or by neither — never both, or the
         // editor would not know which handles to show.
-        val lassoed = MaskLasso.fill(
+        val lassoed = MaskLasso.trace(
             Mask.blank(32, 32),
             listOf(MaskPoint(0.2f, 0.2f), MaskPoint(0.8f, 0.2f), MaskPoint(0.8f, 0.8f)),
         )
@@ -165,7 +165,7 @@ class MaskGradientTest {
         assertNull(gradient.path)
         assertTrue(gradient.gradient != null)
 
-        val relassoed = MaskLasso.fill(
+        val relassoed = MaskLasso.trace(
             gradient,
             listOf(MaskPoint(0.2f, 0.2f), MaskPoint(0.8f, 0.2f), MaskPoint(0.8f, 0.8f)),
         )

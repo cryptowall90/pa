@@ -1,5 +1,8 @@
 package com.pictureperfectx.app.layers
 
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -153,6 +156,63 @@ class MaskLassoTest {
         val mask = MaskLasso.fill(grid(), overhanging)
         assertTrue("the visible part is covered", mask.coverageAt(4, 4) > 0.9f)
         assertEquals("the far side must be untouched", 0f, mask.coverageAt(28, 28), 0.001f)
+    }
+
+    /** A rough circle, the way a finger draws one: many samples, most of them tremor. */
+    private fun traced(count: Int = 160) = (0 until count).map { step ->
+        val angle = step * 2.0 * PI / count
+        val wobble = if (step % 3 == 0) 0.002f else -0.001f
+        MaskPoint(
+            0.5f + (0.3f + wobble) * cos(angle).toFloat(),
+            0.5f + (0.3f + wobble) * sin(angle).toFloat(),
+        )
+    }
+
+    @Test
+    fun `the points a trace keeps redraw the very area it filled`() {
+        // The guarantee the whole split exists for: what is stored to drag later describes exactly
+        // the area that was filled. When it didn't, grabbing a handle made the mask jump.
+        val drawn = MaskLasso.trace(grid(), traced())
+        val points = drawn.path
+        assertTrue("a fresh trace keeps its points", points != null && points.size >= 3)
+
+        val redrawn = MaskLasso.shape(grid(), points!!)
+        assertTrue("refilling from the kept points must not move the area",
+            redrawn.coverage.contentEquals(drawn.coverage))
+    }
+
+    @Test
+    fun `a trace is thinned to a handful of handles, not left as hundreds`() {
+        val drawn = MaskLasso.trace(grid(), traced())
+        val points = drawn.path!!
+        assertTrue("too many handles to drag: ${points.size}", points.size <= PathSimplify.MAX_POINTS)
+    }
+
+    @Test
+    fun `moving one point leaves the far side of the shape where it was`() {
+        // A dragged handle should pull the curve near it and nothing else. Eight points around a
+        // circle: the one being moved is on the right, and the cell checked is a partly covered
+        // edge cell on the left, where any drift would show immediately.
+        val count = 8
+        val handles = (0 until count).map { step ->
+            val angle = step * 2.0 * PI / count
+            MaskPoint(0.5f + 0.3f * cos(angle).toFloat(), 0.5f + 0.3f * sin(angle).toFloat())
+        }
+        val before = MaskLasso.shape(grid(), handles)
+        val moved = handles.toMutableList().also { it[0] = MaskPoint(0.95f, 0.35f) }
+        val after = MaskLasso.shape(grid(), moved)
+
+        assertEquals("the point that moved comes with it", moved, after.path)
+        val settled = before.coverageAt(6, 14)
+        assertTrue("the checked cell should straddle the edge, was $settled", settled > 0.05f && settled < 0.95f)
+        assertEquals("the far side should not have shifted", settled, after.coverageAt(6, 14), 1e-6f)
+    }
+
+    @Test
+    fun `combining a shape into another keeps no points to drag`() {
+        val first = MaskLasso.trace(grid(), traced())
+        val both = MaskLasso.shape(first, square(), SelectionMode.Add)
+        assertEquals("a combined area is no longer one shape", null, both.path)
     }
 
     @Test

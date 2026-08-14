@@ -122,10 +122,10 @@ class PathSimplifyTest {
             MaskPoint(0.75f, 0.75f),
             MaskPoint(0.25f, 0.75f),
         )
-        val lassoed = MaskLasso.fill(Mask.blank(32, 32), square)
+        val lassoed = MaskLasso.trace(Mask.blank(32, 32), square)
         assertTrue("a fresh lasso keeps its points", lassoed.path?.isNotEmpty() == true)
 
-        val added = MaskLasso.fill(lassoed, square, SelectionMode.Add)
+        val added = MaskLasso.trace(lassoed, square, SelectionMode.Add)
         assertEquals("adding leaves a shape the polygon no longer describes", null, added.path)
 
         val brushed = MaskBrush.paint(lassoed, 0.5f, 0.5f, 0.1f)

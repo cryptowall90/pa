@@ -106,6 +106,7 @@ import com.pictureperfectx.app.layers.Mask
 import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskOutline
 import com.pictureperfectx.app.layers.MaskPoint
+import com.pictureperfectx.app.layers.PathCurve
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
@@ -652,10 +653,12 @@ private fun DrawingLayer(
 ) {
     if (!state.canSelect) return
     val mask = state.activeMask
-    // Mask compares by content, so the contour is only retraced when the area actually changes.
+    // Mask compares by content, so these are only recomputed when the area actually changes.
     val contour = remember(mask) {
         if (mask == null || mask.path != null) emptyList() else MaskOutline.segments(mask)
     }
+    // The same curve the mask was filled from, so the outline is the edge rather than near it.
+    val curve = remember(mask) { mask?.path?.let { PathCurve.smooth(it) }.orEmpty() }
     val handles = handlesOf(state)
     val gradient = mask?.gradient
 
@@ -665,14 +668,13 @@ private fun DrawingLayer(
         fun onScreen(point: MaskPoint) =
             Offset(bounds.left + point.x * bounds.width, bounds.top + point.y * bounds.height)
 
-        // A mask that still has its polygon is drawn from it directly — exact, with no grid in the
-        // way. Anything brushed or combined falls back to the traced contour.
+        // A mask that still has its shape is drawn from the very curve it was filled from — exact,
+        // with no grid in the way. Anything brushed or combined falls back to the traced contour.
         val outline = Path()
-        val path = mask?.path
-        if (path != null && path.size >= 2) {
-            val start = onScreen(path.first())
+        if (curve.size >= 2) {
+            val start = onScreen(curve.first())
             outline.moveTo(start.x, start.y)
-            path.drop(1).forEach { point ->
+            curve.drop(1).forEach { point ->
                 val screen = onScreen(point)
                 outline.lineTo(screen.x, screen.y)
             }

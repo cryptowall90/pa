@@ -32,7 +32,38 @@ object MaskLasso {
     private const val SUB_SCANLINES = 4
 
     /**
+     * A freehand loop, as drawn: thinned to the points worth offering as handles, then filled from
+     * the curve through them.
+     *
+     * Thinning **before** filling rather than after is the whole point. The area, the outline drawn
+     * over the photo and the handles all come from one curve, so none of them can describe a shape
+     * the others don't — which is what used to make the mask jump the moment a handle was grabbed.
+     */
+    fun trace(mask: Mask, drawn: List<MaskPoint>, mode: SelectionMode = SelectionMode.Replace): Mask =
+        shape(mask, PathSimplify.simplify(drawn), mode)
+
+    /**
+     * Fills the closed curve through [handles], keeping them as the shape's control points.
+     *
+     * This is what a dragged handle re-runs, and it is deliberately the same call the freehand
+     * trace ends in: dragging a point can only move the shape, never change what kind of shape it
+     * is.
+     */
+    fun shape(mask: Mask, handles: List<MaskPoint>, mode: SelectionMode = SelectionMode.Replace): Mask {
+        // Fewer than three encloses nothing, and keeping them would leave a mask carrying a shape
+        // that describes no area at all.
+        if (handles.size < 3) return mask
+        val filled = fill(mask, PathCurve.smooth(handles), mode)
+        // A fresh shape *is* the area, so its points are worth keeping to drag later. Adding or
+        // subtracting leaves a shape this one no longer describes, so nothing is kept.
+        return if (mode == SelectionMode.Replace) filled.copy(path = handles) else filled
+    }
+
+    /**
      * Rasterises [path] as a closed polygon and combines it with [mask] according to [mode].
+     *
+     * Purely a rasteriser: it draws exactly the polygon it is handed and keeps no control points.
+     * [trace] and [shape] are the lasso's way in, and they decide what the shape is first.
      *
      * Uses the **even-odd** rule, which is what makes a shape drawn with a crossing-over stroke —
      * or one lassoed around an inner hole — behave the way it looks rather than filling solid.
@@ -81,10 +112,8 @@ object MaskLasso {
                 (existing[it] - drawn[it]).coerceAtLeast(0f)
             }
         }
-        // A fresh lasso *is* the area, so its points are worth keeping to drag later. Adding or
-        // subtracting leaves a shape this polygon no longer describes, so the old one is dropped.
-        val kept = if (mode == SelectionMode.Replace) PathSimplify.simplify(path) else null
-        return mask.copy(coverage = combined, path = kept, gradient = null)
+        // Whatever described the old area no longer describes this one.
+        return mask.copy(coverage = combined, path = null, gradient = null)
     }
 
     /** Where the closed polygon crosses the horizontal line at [y], in normalized x. */
