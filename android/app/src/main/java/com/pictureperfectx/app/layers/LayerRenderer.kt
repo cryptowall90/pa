@@ -42,6 +42,9 @@ object LayerRenderer {
     /** A colour gradient is a smooth ramp, so it is generated small and scaled up. */
     private const val GRADIENT_WORKING_EDGE = 512
 
+    /** Rows composited at a time, so a big export doesn't hold the whole photo twice over. */
+    private const val BLEND_BAND_ROWS = 128
+
     /** A stroked shape asked for no width still needs one, or it draws nothing at all. */
     private const val MIN_STROKE = 0.004f
 
@@ -64,14 +67,56 @@ object LayerRenderer {
                 .getOrNull() ?: return@forEach
 
             val masked = applyMask(effect, layer.mask)
+            compose(canvas, result, masked, layer)
+        }
+        return result
+    }
+
+    /**
+     * Puts one layer's finished pixels onto the running result.
+     *
+     * `Normal` is a plain source-over draw, which is both correct and the fast path. Every other
+     * mode goes through [LayerBlend] instead of a `PorterDuffXfermode`, because those get the alpha
+     * wrong for what a layer means here — `MULTIPLY` computes the result's alpha as `Sa × Da`, so
+     * a masked-out or faded-out pixel punched a hole in the photo rather than leaving it alone.
+     *
+     * A band at a time rather than the whole photo: two full-resolution `IntArray`s of a 12MP
+     * export would be the better part of a hundred megabytes, and this runs per layer.
+     */
+    private fun compose(canvas: Canvas, result: Bitmap, masked: Bitmap, layer: Layer) {
+        if (layer.blend == BlendMode.Normal) {
             val paint = Paint().apply {
                 isFilterBitmap = true
                 alpha = (layer.opacity.coerceIn(0f, 1f) * 255).roundToInt()
-                xfermode = layer.blend.toXfermode()
             }
             canvas.drawBitmap(masked, 0f, 0f, paint)
+            return
         }
-        return result
+
+        val width = result.width
+        val height = result.height
+        // Every effect is generated at the source's size, but a scaled one would silently blend
+        // offset pixels, which is worse than the cost of putting it right.
+        val source = if (masked.width == width && masked.height == height) {
+            masked
+        } else {
+            Bitmap.createScaledBitmap(masked, width, height, true)
+        }
+
+        val bandRows = BLEND_BAND_ROWS.coerceAtMost(height)
+        val below = IntArray(width * bandRows)
+        val above = IntArray(width * bandRows)
+        var top = 0
+        while (top < height) {
+            val rows = bandRows.coerceAtMost(height - top)
+            val count = width * rows
+            result.getPixels(below, 0, width, 0, top, width, rows)
+            source.getPixels(above, 0, width, 0, top, width, rows)
+            LayerBlend.composite(below, above, layer.blend, layer.opacity, count)
+            result.setPixels(below, 0, width, 0, top, width, rows)
+            top += rows
+        }
+        if (source !== masked && !source.isRecycled) source.recycle()
     }
 
     /** The layer's edit applied to the whole of [source]; the mask decides where it survives. */
@@ -411,13 +456,4 @@ object LayerRenderer {
         return masked
     }
 
-    /** Normal draws straight over; the rest map onto PorterDuff modes available on every API level. */
-    private fun BlendMode.toXfermode(): PorterDuffXfermode? = when (this) {
-        BlendMode.Normal -> null
-        BlendMode.Multiply -> PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
-        BlendMode.Screen -> PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-        BlendMode.Overlay -> PorterDuffXfermode(PorterDuff.Mode.OVERLAY)
-        BlendMode.Darken -> PorterDuffXfermode(PorterDuff.Mode.DARKEN)
-        BlendMode.Lighten -> PorterDuffXfermode(PorterDuff.Mode.LIGHTEN)
-    }
 }
