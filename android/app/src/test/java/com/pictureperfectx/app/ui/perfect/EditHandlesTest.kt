@@ -111,6 +111,13 @@ class EditHandlesTest {
     }
 
     @Test
+    fun `a flat fill has no ramp to aim, so it offers only its area`() {
+        val area = lassoed()
+        val fill = Layer.Gradient(id = 1, solid = true, mask = area)
+        assertEquals(area.path, editHandles(editing(layer = fill)))
+    }
+
+    @Test
     fun `an unmasked layer with no shape of its own has nothing to drag`() {
         assertTrue(editHandles(editing(layer = Layer.Tone(id = 1))).isEmpty())
     }

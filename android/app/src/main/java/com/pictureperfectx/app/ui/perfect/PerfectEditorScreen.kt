@@ -663,7 +663,7 @@ private fun DrawingLayer(
     val gradient = mask?.gradient
     // A gradient layer's own wash runs along its spec, which is a different thing from the area it
     // applies through — both get an axis, or dragging the handles would be guesswork.
-    val ramp = (state.document.selected as? Layer.Gradient)?.spec
+    val ramp = (state.document.selected as? Layer.Gradient)?.takeUnless { it.solid }?.spec
 
     Canvas(modifier = modifier) {
         if (bounds.width <= 0f || bounds.height <= 0f) return@Canvas

@@ -229,8 +229,13 @@ fun editHandles(state: PerfectEditUiState): List<MaskPoint> {
         is Layer.Shape -> listOf(selected.centre, selected.corner)
         // A gradient layer has two shapes worth dragging, and they mean different things: the area
         // says where the wash lands, its own ramp says which way the colour runs inside it. The
-        // ramp goes last so an area's handles keep the indices they have for every other layer.
-        is Layer.Gradient -> areaHandles(state) + listOf(selected.spec.start, selected.spec.end)
+        // ramp goes last so an area's handles keep the indices they have for every other layer —
+        // and a flat fill has no ramp to aim, so it gets none.
+        is Layer.Gradient -> if (selected.solid) {
+            areaHandles(state)
+        } else {
+            areaHandles(state) + listOf(selected.spec.start, selected.spec.end)
+        }
         else -> areaHandles(state)
     }
 }
