@@ -1093,9 +1093,9 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 // past the end of that list is one of the two ends of the wash.
                 val area = areaHandles(_state.value).size
                 if (index >= area) {
-                    val end = point
+                    val moved = point
                     onGradientLayerSpec(selected.id) {
-                        if (index == area) it.copy(start = end) else it.copy(end = end)
+                        if (index == area) it.copy(start = moved) else it.copy(end = moved)
                     }
                     return
                 }
