@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.pictureperfectx.app.PicturePerfectApp
 import com.pictureperfectx.app.capture.ProxyStore
+import com.pictureperfectx.app.data.EditStore
 import com.pictureperfectx.app.data.PhotoEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -58,5 +59,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun remove(photo: PhotoEntity) {
         repository.remove(photo.id)
         ProxyStore.delete(getApplication(), photo.proxyUri)
+        // The stack is only ever reachable through this row, so it goes with it rather than sitting
+        // in app storage forever with nothing pointing at it.
+        EditStore.delete(getApplication(), photo.editUri)
     }
 }

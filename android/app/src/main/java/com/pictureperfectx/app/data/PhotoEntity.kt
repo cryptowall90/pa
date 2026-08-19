@@ -25,9 +25,22 @@ data class PhotoEntity(
      * 256px, so without this a phone that can't demosaic RAW has nothing sharp to show or edit.
      */
     val proxyUri: String? = null,
+    /**
+     * The photo this one was edited *from*, for a shot the Perfect Editor produced.
+     *
+     * Always the original rather than the previous export: editing an edited photo re-points at the
+     * same source, so the chain stays one link long however many times it is revised, and every
+     * revision starts from pixels that have only been through JPEG once.
+     */
+    val sourceUri: String? = null,
+    /** The layer stack behind this photo, as an `EditStore` file. See [isEdited]. */
+    val editUri: String? = null,
 ) {
     /** True when the shot wrote a DNG — drives the RAW badge in the gallery. */
     val isRaw: Boolean get() = rawUri != null
+
+    /** True when this photo can be reopened with its layers rather than as flat pixels. */
+    val isEdited: Boolean get() = editUri != null && sourceUri != null
 
     /**
      * True when the DNG *is* the photo. RAW-only captures have no JPEG, so [uri] points at the DNG
