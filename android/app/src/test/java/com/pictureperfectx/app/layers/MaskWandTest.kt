@@ -12,23 +12,23 @@ import org.junit.Test
  */
 class MaskWandTest {
 
-    private val size = 32
+    private val edge = 32
 
     private fun argb(r: Int, g: Int, b: Int) = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 
     private val red = argb(255, 0, 0)
     private val blue = argb(0, 0, 255)
 
-    private fun mask() = Mask.blank(size, size)
+    private fun mask() = Mask.blank(edge, edge)
 
-    private fun grid(fill: Int) = IntArray(size * size) { fill }
+    private fun grid(fill: Int) = IntArray(edge * edge) { fill }
 
     private fun IntArray.box(columns: IntRange, rows: IntRange, colour: Int) = apply {
-        rows.forEach { row -> columns.forEach { column -> this[row * size + column] = colour } }
+        rows.forEach { row -> columns.forEach { column -> this[row * edge + column] = colour } }
     }
 
     /** The centre of a cell, in the normalized space a tap arrives in. */
-    private fun at(column: Int, row: Int) = (column + 0.5f) / size to (row + 0.5f) / size
+    private fun at(column: Int, row: Int) = (column + 0.5f) / edge to (row + 0.5f) / edge
 
     private fun Mask.covered() = (0 until columns * rows).count { coverage[it] > 0.5f }
 
@@ -36,7 +36,7 @@ class MaskWandTest {
     fun `a shape is taken whole and its surroundings are left alone`() {
         val pixels = grid(blue).box(8..23, 8..23, red)
         val (x, y) = at(16, 16)
-        val chosen = MaskWand.select(pixels, size, size, mask(), x, y, tolerance = 0.2f)
+        val chosen = MaskWand.select(pixels, edge, edge, mask(), x, y, tolerance = 0.2f)
 
         assertEquals("the tapped colour", 1f, chosen.coverageAt(16, 16), 0.001f)
         assertEquals("well outside it", 0f, chosen.coverageAt(2, 2), 0.001f)
@@ -50,11 +50,11 @@ class MaskWandTest {
         val pixels = grid(blue).box(4..11, 12..19, red).box(20..27, 12..19, red)
         val (x, y) = at(8, 16)
 
-        val near = MaskWand.select(pixels, size, size, mask(), x, y, 0.2f, contiguous = true)
+        val near = MaskWand.select(pixels, edge, edge, mask(), x, y, 0.2f, contiguous = true)
         assertEquals(8 * 8, near.covered())
         assertEquals("the far square is a different area", 0f, near.coverageAt(24, 16), 0.001f)
 
-        val everywhere = MaskWand.select(pixels, size, size, mask(), x, y, 0.2f, contiguous = false)
+        val everywhere = MaskWand.select(pixels, edge, edge, mask(), x, y, 0.2f, contiguous = false)
         assertEquals(2 * 8 * 8, everywhere.covered())
         assertEquals("the far square matches too", 1f, everywhere.coverageAt(24, 16), 0.001f)
     }
@@ -63,31 +63,31 @@ class MaskWandTest {
     fun `a gradient does not walk the selection across the whole photo`() {
         // Black to white left to right. Every neighbour is nearly identical to the last, so a wand
         // that compared neighbours would select all of it. Tolerance is measured from the tap.
-        val pixels = IntArray(size * size) { index ->
-            val level = Math.round((index % size) * 255f / (size - 1))
+        val pixels = IntArray(edge * edge) { index ->
+            val level = Math.round((index % edge) * 255f / (edge - 1))
             argb(level, level, level)
         }
         val (x, y) = at(0, 16)
-        val chosen = MaskWand.select(pixels, size, size, mask(), x, y, tolerance = 0.1f)
+        val chosen = MaskWand.select(pixels, edge, edge, mask(), x, y, tolerance = 0.1f)
 
-        val touched = (0 until size * size).count { chosen.coverage[it] > 0f }
+        val touched = (0 until edge * edge).count { chosen.coverage[it] > 0f }
         assertTrue(
-            "a tenth of the range should not select ${touched * 100 / (size * size)}% of the photo",
-            touched < size * size / 4,
+            "a tenth of the range should not select ${touched * 100 / (edge * edge)}% of the photo",
+            touched < edge * edge / 4,
         )
         assertTrue("but it should select something", touched > 0)
     }
 
     @Test
     fun `the edge fades rather than stepping straight to nothing`() {
-        val pixels = IntArray(size * size) { index ->
-            val level = Math.round((index % size) * 255f / (size - 1))
+        val pixels = IntArray(edge * edge) { index ->
+            val level = Math.round((index % edge) * 255f / (edge - 1))
             argb(level, level, level)
         }
         val (x, y) = at(0, 16)
-        val chosen = MaskWand.select(pixels, size, size, mask(), x, y, tolerance = 0.1f)
+        val chosen = MaskWand.select(pixels, edge, edge, mask(), x, y, tolerance = 0.1f)
 
-        val partial = (0 until size).count { column ->
+        val partial = (0 until edge).count { column ->
             val value = chosen.coverageAt(column, 16)
             value > 0f && value < 1f
         }
@@ -99,9 +99,9 @@ class MaskWandTest {
         // Two reds five levels apart — indistinguishable by eye, and deliberately not the same.
         val pixels = grid(argb(200, 0, 0)).box(16..31, 0..31, argb(205, 0, 0))
         val (x, y) = at(3, 16)
-        val chosen = MaskWand.select(pixels, size, size, mask(), x, y, 0f, contiguous = false)
+        val chosen = MaskWand.select(pixels, edge, edge, mask(), x, y, 0f, contiguous = false)
 
-        assertEquals("only the exact colour", 16 * size, chosen.covered())
+        assertEquals("only the exact colour", 16 * edge, chosen.covered())
         assertEquals(1f, chosen.coverageAt(3, 16), 0.001f)
         assertEquals(0f, chosen.coverageAt(20, 16), 0.001f)
     }
@@ -112,14 +112,14 @@ class MaskWandTest {
         val (leftX, leftY) = at(8, 16)
         val (rightX, rightY) = at(24, 16)
 
-        val left = MaskWand.select(pixels, size, size, mask(), leftX, leftY, 0.2f)
+        val left = MaskWand.select(pixels, edge, edge, mask(), leftX, leftY, 0.2f)
         val both = MaskWand.select(
-            pixels, size, size, left, rightX, rightY, 0.2f, mode = SelectionMode.Add,
+            pixels, edge, edge, left, rightX, rightY, 0.2f, mode = SelectionMode.Add,
         )
         assertEquals("both squares", 2 * 8 * 8, both.covered())
 
         val backToOne = MaskWand.select(
-            pixels, size, size, both, rightX, rightY, 0.2f, mode = SelectionMode.Subtract,
+            pixels, edge, edge, both, rightX, rightY, 0.2f, mode = SelectionMode.Subtract,
         )
         assertEquals(8 * 8, backToOne.covered())
         assertEquals(1f, backToOne.coverageAt(8, 16), 0.001f)
@@ -133,7 +133,7 @@ class MaskWandTest {
             listOf(MaskPoint(0.2f, 0.2f), MaskPoint(0.8f, 0.3f), MaskPoint(0.5f, 0.8f)),
         )
         val (x, y) = at(16, 16)
-        val chosen = MaskWand.select(grid(red), size, size, lassoed, x, y, 0.2f)
+        val chosen = MaskWand.select(grid(red), edge, edge, lassoed, x, y, 0.2f)
         assertEquals(null, chosen.path)
         assertEquals(null, chosen.gradient)
     }
@@ -141,8 +141,8 @@ class MaskWandTest {
     @Test
     fun `a tap outside the photo changes nothing`() {
         val before = mask()
-        assertEquals(before, MaskWand.select(grid(red), size, size, before, -0.2f, 0.5f))
-        assertEquals(before, MaskWand.select(grid(red), size, size, before, 0.5f, 1.4f))
+        assertEquals(before, MaskWand.select(grid(red), edge, edge, before, -0.2f, 0.5f))
+        assertEquals(before, MaskWand.select(grid(red), edge, edge, before, 0.5f, 1.4f))
     }
 
     @Test
