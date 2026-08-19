@@ -473,21 +473,22 @@ enum class ColourTone(val label: String) {
 
 /** Copies a layer with new common properties, preserving its specific type and payload. */
 fun Layer.withCommon(
+    id: Long = this.id,
     name: String = this.name,
     isVisible: Boolean = this.isVisible,
     opacity: Float = this.opacity,
     blend: BlendMode = this.blend,
     mask: Mask = this.mask,
 ): Layer = when (this) {
-    is Layer.Tone -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Look -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Blur -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Gradient -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Curve -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Text -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Shape -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Smooth -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Heal -> copy(name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Tone -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Look -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Blur -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Gradient -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Curve -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Text -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Shape -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Smooth -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Heal -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
 }
 
 /** A line has no inside, so it is always stroked whatever the stroke width says. */

@@ -245,6 +245,38 @@ class DocumentTest {
     }
 
     @Test
+    fun `a duplicate lands directly above its original and takes the selection`() {
+        val document = docWithThree()
+        val middle = document.layers[1]
+        val duplicated = document.duplicate(middle.id)
+
+        assertEquals(4, duplicated.layers.size)
+        assertEquals("the original stays put", middle.id, duplicated.layers[1].id)
+        assertEquals("the copy sits on top of it", duplicated.layers[2].id, duplicated.selectedId)
+        assertTrue("ids are never reused", duplicated.layers.map { it.id }.toSet().size == 4)
+    }
+
+    @Test
+    fun `a duplicate keeps the area that took the work`() {
+        // The point of the feature: a second effect through the same hand-drawn area.
+        val mask = MaskLasso.trace(
+            Mask.blank(32, 32),
+            listOf(MaskPoint(0.2f, 0.2f), MaskPoint(0.8f, 0.3f), MaskPoint(0.5f, 0.8f)),
+        )
+        val document = Document().add { Layer.Tone(id = it, mask = mask) }
+        val twin = document.duplicate(document.layers.single().id).layers[1]
+
+        assertEquals(mask, twin.mask)
+        assertTrue("and says what it is", twin.name.endsWith("copy"))
+    }
+
+    @Test
+    fun `duplicating a layer that isn't there changes nothing`() {
+        val document = docWithThree()
+        assertEquals(document, document.duplicate(999L))
+    }
+
+    @Test
     fun `undo and redo at the ends are no-ops`() {
         val history = History()
         assertEquals(history, history.undo())

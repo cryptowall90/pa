@@ -128,7 +128,16 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
     SmoothAmount("Amount"),
     HealSize("Spot size"),
     BrushSize("Brush size"),
-    WandTolerance("Tolerance");
+    WandTolerance("Tolerance"),
+
+    // These five are controls that aren't a slider. They are chips in the same row as everything
+    // else, and what they open replaces the slider rather than stacking another row beneath it —
+    // which is what used to put six rows under the photo for a text layer.
+    TextContent("Words"),
+    TextTypeface("Font"),
+    ShapeKindPick("Shape"),
+    LookPick("Filter"),
+    CurveGraph("Curve");
 
     companion object {
         /** What [layer] offers, plus brush size when the brush is what's in hand. */
@@ -145,12 +154,18 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
                     if (!layer.solid) { add(ColourTo); add(Falloff) }
                 }
                 // A curve's control is the graph itself, not a slider.
-                is Layer.Curve -> Unit
-                is Layer.Text -> { add(TextSize); add(TextRotation); add(TextColour) }
-                is Layer.Shape -> { add(ShapeStroke); add(TextRotation); add(TextColour) }
+                is Layer.Curve -> add(CurveGraph)
+                // Words first: it is the thing you came to change on a layer that is words.
+                is Layer.Text -> {
+                    add(TextContent); add(TextSize); add(TextRotation)
+                    add(TextColour); add(TextTypeface)
+                }
+                is Layer.Shape -> {
+                    add(ShapeKindPick); add(ShapeStroke); add(TextRotation); add(TextColour)
+                }
                 is Layer.Smooth -> add(SmoothAmount)
                 is Layer.Heal -> add(HealSize)
-                is Layer.Look -> add(Intensity)
+                is Layer.Look -> { add(LookPick); add(Intensity) }
             }
             add(Opacity)
             // Feathering an area that doesn't exist is a slider that does nothing.
@@ -701,10 +716,10 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         val control = when (kind) {
             EffectKind.Gradient -> LayerControl.ColourFrom
-            EffectKind.Look -> LayerControl.Intensity
-            EffectKind.Curve -> LayerControl.Opacity
-            EffectKind.Text -> LayerControl.TextSize
-            EffectKind.Shape -> LayerControl.ShapeStroke
+            EffectKind.Look -> LayerControl.LookPick
+            EffectKind.Curve -> LayerControl.CurveGraph
+            EffectKind.Text -> LayerControl.TextContent
+            EffectKind.Shape -> LayerControl.ShapeKindPick
             EffectKind.Smooth -> LayerControl.SmoothAmount
             EffectKind.Heal -> LayerControl.HealSize
             EffectKind.Whiten, EffectKind.Brighten -> LayerControl.ToneExposure
@@ -740,6 +755,9 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onRemoveLayer(id: Long) = commit(_state.value.document.remove(id))
 
     fun onMoveLayer(id: Long, up: Boolean) = commit(_state.value.document.move(id, up))
+
+    /** Copies a layer, mask and all — a second effect through an area already drawn once. */
+    fun onDuplicateLayer(id: Long) = commit(_state.value.document.duplicate(id))
 
     fun onLayerOpacity(id: Long, opacity: Float) =
         applyDocument(_state.value.document.setOpacity(id, opacity), record = false)
@@ -1014,10 +1032,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onSelectionTool(tool: SelectionTool) = _state.update { it.copy(selectionTool = tool) }
 
-    fun onCycleSelectionMode() = _state.update {
-        val modes = SelectionMode.entries
-        it.copy(selectionMode = modes[(modes.indexOf(it.selectionMode) + 1) % modes.size])
-    }
+    fun onSelectionMode(mode: SelectionMode) = _state.update { it.copy(selectionMode = mode) }
 
     fun onBrushRadius(radius: Float) = _state.update { it.copy(brushRadius = radius.coerceIn(0.02f, 0.5f)) }
 

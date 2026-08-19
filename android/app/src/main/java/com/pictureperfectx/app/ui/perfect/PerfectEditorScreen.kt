@@ -155,6 +155,7 @@ fun PerfectEditorScreen(
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var addingEffect by remember { mutableStateOf(false) }
+    var showingLayers by remember { mutableStateOf(false) }
 
     LaunchedEffect(sourceUri) { viewModel.load(sourceUri) }
     // Leaving effects abandons a half-opened picker, so it isn't waiting on the way back in.
@@ -201,6 +202,7 @@ fun PerfectEditorScreen(
                         viewModel = viewModel,
                         addingEffect = addingEffect,
                         onAddingEffect = { addingEffect = it },
+                        onOpenLayers = { showingLayers = true },
                     )
 
                     EditorPanel.Crop -> {
@@ -249,6 +251,20 @@ fun PerfectEditorScreen(
                     onToggleMenu = viewModel::onToggleMenu,
                 )
             }
+        }
+
+        if (showingLayers) {
+            LayerSheet(
+                state = state,
+                onDismiss = { showingLayers = false },
+                // Choosing a layer is what you opened this for, so it closes on the way out.
+                onSelect = { id -> viewModel.onSelectLayer(id); showingLayers = false },
+                onToggleVisible = viewModel::onToggleLayerVisibility,
+                onMove = viewModel::onMoveLayer,
+                onDuplicate = viewModel::onDuplicateLayer,
+                onRemove = viewModel::onRemoveLayer,
+                onCycleBlend = viewModel::onCycleBlend,
+            )
         }
     }
 }
@@ -900,37 +916,20 @@ private fun EffectsControls(
     viewModel: PerfectEditorViewModel,
     addingEffect: Boolean,
     onAddingEffect: (Boolean) -> Unit,
+    onOpenLayers: () -> Unit,
 ) {
     val layer = state.document.selected
 
-    // How an area gets chosen, first — drawing comes before there is anything to apply.
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BackToMenu(onClick = viewModel::onBackToMenu)
-        SelectionChips(
-            state = state,
-            viewModel = viewModel,
-            layer = layer,
-            modifier = Modifier.weight(1f),
-        )
-    }
+    // Zone one: how an area gets chosen. Four tools and a mode, in fixed slots that always fit —
+    // this used to be a scrolling row of up to ten chips mixing tools, mask actions and layer
+    // actions, with Delete off the right-hand edge.
+    ToolBar(state = state, viewModel = viewModel)
 
-    // Only while the fade tool is in hand — five more chips permanently on screen would undo the
-    // height the photo was given.
-    if (state.selectionTool == SelectionTool.Fade) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(GradientStyle.entries.toList(), key = { it.name }) { style ->
-                PanelChip(label = style.label, isSelected = style == state.gradientStyle) {
-                    viewModel.onSelectGradientStyle(style)
-                }
-            }
-        }
+    // Mask actions, and only when there is a mask for them to act on.
+    if (state.activeMask != null || state.document.selected != null) {
+        MaskBar(state = state, viewModel = viewModel, onOpenLayers = onOpenLayers)
+    } else {
+        StackBar(state = state, onAdd = { onAddingEffect(true) }, onOpenLayers = onOpenLayers)
     }
 
     if (addingEffect) {
@@ -941,52 +940,11 @@ private fun EffectsControls(
             },
             onCancel = { onAddingEffect(false) },
         )
-    } else {
-        LayerRow(
-            state = state,
-            onAdd = { onAddingEffect(true) },
-            onSelectLayer = viewModel::onSelectLayer,
-            onToggleVisible = viewModel::onToggleLayerVisibility,
-        )
     }
 
+    // Zone three: exactly one control for whatever is selected, and a line saying what a tap does.
     if (layer == null) {
-        if (state.selectionTool == SelectionTool.Brush) {
-            ValueSlider(
-                value = state.brushRadius,
-                range = 0.02f..0.5f,
-                readout = "${(state.brushRadius * 100).roundToInt()}",
-                onChange = viewModel::onBrushRadius,
-            )
-        }
-        if (state.selectionTool == SelectionTool.Wand) {
-            ValueSlider(
-                value = state.wandTolerance,
-                range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
-                readout = "${(state.wandTolerance * 100).roundToInt()}",
-                onChange = viewModel::onWandTolerance,
-            )
-        }
-        // An area can be softened before its effect is chosen, the same as after.
-        if (state.pendingSelection != null) {
-            FeatherSlider(state = state, viewModel = viewModel)
-        }
-        Text(
-            text = if (state.pendingSelection == null) {
-                when (state.selectionTool) {
-                    SelectionTool.Fade ->
-                        "Drag across the photo, then add an effect to fade it in along the run."
-                    SelectionTool.Wand ->
-                        "Tap a colour to choose everything like it, then add an effect."
-                    else -> "Draw around an area, then add an effect to apply it only there."
-                }
-            } else {
-                "Area ready — add an effect and it applies only there."
-            },
-            color = Color(0xAAFFFFFF),
-            fontSize = 11.sp,
-            modifier = Modifier.padding(horizontal = 20.dp),
-        )
+        ToolInspector(state = state, viewModel = viewModel)
         return
     }
 
@@ -1005,10 +963,88 @@ private fun EffectsControls(
         }
     }
 
-    ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
+    LayerInspector(layer = layer, control = control, state = state, viewModel = viewModel)
+    StatusLine(text = describe(layer, state))
+}
 
-    if (layer is Layer.Text) {
-        BasicTextField(
+/** What is being edited, where it lands, and what touching the photo will do to it. */
+private fun describe(layer: Layer, state: PerfectEditUiState): String {
+    val where = if (layer.mask.isEmpty) "the whole photo" else "its area"
+    val next = when (state.selectionTool) {
+        SelectionTool.Lasso -> "draw to reshape it"
+        SelectionTool.Brush -> "paint to reshape it"
+        SelectionTool.Fade -> "drag to fade it"
+        SelectionTool.Wand -> "tap a colour to reshape it"
+    }
+    return "${layer.name} · ${state.selectionMode.label.lowercase()} on $where · $next"
+}
+
+/**
+ * The settings for whichever tool is in hand, when no layer is selected yet.
+ *
+ * One block, never more than two rows, and it says in words what a tap or a drag will do — the one
+ * thing the old panel never told anyone.
+ */
+@Composable
+private fun ToolInspector(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+    when (state.selectionTool) {
+        SelectionTool.Brush -> ValueSlider(
+            value = state.brushRadius,
+            range = 0.02f..0.5f,
+            readout = "${(state.brushRadius * 100).roundToInt()}",
+            onChange = viewModel::onBrushRadius,
+        )
+
+        SelectionTool.Wand -> ValueSlider(
+            value = state.wandTolerance,
+            range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
+            readout = "${(state.wandTolerance * 100).roundToInt()}",
+            onChange = viewModel::onWandTolerance,
+        )
+
+        SelectionTool.Fade -> ChipRow(
+            items = GradientStyle.entries.toList(),
+            label = { it.label },
+            isSelected = { it == state.gradientStyle },
+            onSelect = viewModel::onSelectGradientStyle,
+        )
+
+        SelectionTool.Lasso -> Unit
+    }
+
+    // An area can be softened before its effect is chosen, the same as after.
+    if (state.pendingSelection != null) FeatherSlider(state = state, viewModel = viewModel)
+
+    StatusLine(
+        text = if (state.pendingSelection == null) {
+            when (state.selectionTool) {
+                SelectionTool.Lasso -> "Draw around an area, then add an effect to apply it only there."
+                SelectionTool.Brush -> "Paint over an area, then add an effect to apply it only there."
+                SelectionTool.Fade -> "Drag across the photo, then add an effect to fade it in along the run."
+                SelectionTool.Wand -> "Tap a colour to choose everything like it, then add an effect."
+            }
+        } else {
+            "Area ready — add an effect and it applies only there."
+        },
+    )
+}
+
+/**
+ * The one control the selected chip asks for.
+ *
+ * Every branch is a *replacement*, not an addition. A text layer used to stack its chips, a slider,
+ * a text field and a font row — four rows under the photo on top of the two above them. Here the
+ * words, the font and the size are three chips that each swap out the same block.
+ */
+@Composable
+private fun LayerInspector(
+    layer: Layer,
+    control: LayerControl,
+    state: PerfectEditUiState,
+    viewModel: PerfectEditorViewModel,
+) {
+    when {
+        control == LayerControl.TextContent && layer is Layer.Text -> BasicTextField(
             value = layer.content,
             onValueChange = { viewModel.onTextContent(layer.id, it) },
             textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
@@ -1020,124 +1056,143 @@ private fun EffectsControls(
                 .background(Color(0x22FFFFFF))
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         )
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(TextFont.entries.toList(), key = { it.name }) { font ->
-                PanelChip(label = font.label, isSelected = font == layer.font) {
-                    viewModel.onTextFont(layer.id, font)
-                }
-            }
-            // Clear is a gradient idea; invisible text is a bug report, not a choice.
-            items(
-                ColourTone.entries.filter { it != ColourTone.Clear },
-                key = { "tone-" + it.name },
-            ) { tone ->
-                PanelChip(label = tone.label, isSelected = tone == layer.colour.tone) {
-                    viewModel.onTextTone(layer.id, tone)
-                }
-            }
-        }
-    }
 
-    if (layer is Layer.Shape) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(ShapeKind.entries.toList(), key = { it.name }) { kind ->
-                PanelChip(label = kind.label, isSelected = kind == layer.kind) {
-                    viewModel.onShapeKind(layer.id, kind)
-                }
-            }
-            items(
-                ColourTone.entries.filter { it != ColourTone.Clear },
-                key = { "tone-" + it.name },
-            ) { tone ->
-                PanelChip(label = tone.label, isSelected = tone == layer.colour.tone) {
-                    viewModel.onShapeTone(layer.id, tone)
-                }
-            }
-        }
-    }
-
-    if (layer is Layer.Curve) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(CurveChannel.entries.toList(), key = { it.name }) { channel ->
-                PanelChip(label = channel.label, isSelected = channel == state.curveChannel) {
-                    viewModel.onSelectCurveChannel(channel)
-                }
-            }
-        }
-        CurveEditor(
-            points = layer.spec.channel(state.curveChannel),
-            channel = state.curveChannel,
-            histogram = state.canvas?.let { rememberHistogram(it, state.curveChannel) },
-            onMove = { index, point -> viewModel.onMoveCurvePoint(layer.id, index, point) },
-            onAdd = { viewModel.onAddCurvePoint(layer.id, it) },
-            onRemove = { viewModel.onRemoveCurvePoint(layer.id, it) },
-            onFinished = viewModel::commitLayerEdit,
+        control == LayerControl.TextTypeface && layer is Layer.Text -> ChipRow(
+            items = TextFont.entries.toList(),
+            label = { it.label },
+            isSelected = { it == layer.font },
+            onSelect = { viewModel.onTextFont(layer.id, it) },
         )
-    }
 
-    if (layer is Layer.Look) {
-        LookRow(
+        control == LayerControl.ShapeKindPick && layer is Layer.Shape -> ChipRow(
+            items = ShapeKind.entries.toList(),
+            label = { it.label },
+            isSelected = { it == layer.kind },
+            onSelect = { viewModel.onShapeKind(layer.id, it) },
+        )
+
+        control == LayerControl.LookPick && layer is Layer.Look -> LookRow(
             filters = viewModel.filters,
             selectedId = layer.filterId,
             onSelect = { viewModel.onLayerFilter(layer.id, it) },
         )
-    }
 
-    if (layer is Layer.Gradient &&
-        (control == LayerControl.ColourFrom || control == LayerControl.ColourTo)
+        control == LayerControl.CurveGraph && layer is Layer.Curve -> {
+            ChipRow(
+                items = CurveChannel.entries.toList(),
+                label = { it.label },
+                isSelected = { it == state.curveChannel },
+                onSelect = viewModel::onSelectCurveChannel,
+            )
+            CurveEditor(
+                points = layer.spec.channel(state.curveChannel),
+                channel = state.curveChannel,
+                histogram = state.canvas?.let { rememberHistogram(it, state.curveChannel) },
+                onMove = { index, point -> viewModel.onMoveCurvePoint(layer.id, index, point) },
+                onAdd = { viewModel.onAddCurvePoint(layer.id, it) },
+                onRemove = { viewModel.onRemoveCurvePoint(layer.id, it) },
+                onFinished = viewModel::commitLayerEdit,
+            )
+        }
+
+        else -> {
+            ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
+            // A hue slider on its own can't reach black, white or transparent, so the shortcuts
+            // ride with it rather than as a row of their own.
+            ColourTones(layer = layer, control = control, viewModel = viewModel)
+            // The shape of the ramp belongs with the slider that shapes it.
+            if (layer is Layer.Gradient && control == LayerControl.Falloff && !layer.solid) {
+                ChipRow(
+                    items = GradientStyle.entries.toList(),
+                    label = { it.label },
+                    isSelected = { it == layer.spec.style },
+                    onSelect = { style ->
+                        viewModel.onGradientLayerSpec(layer.id) { it.copy(style = style) }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** The tone shortcuts beside a colour slider: black, white, and — for a ramp — clear. */
+@Composable
+private fun ColourTones(layer: Layer, control: LayerControl, viewModel: PerfectEditorViewModel) {
+    when {
+        layer is Layer.Text && control == LayerControl.TextColour -> ChipRow(
+            // Clear is a gradient idea; invisible text is a bug report, not a choice.
+            items = ColourTone.entries.filter { it != ColourTone.Clear },
+            label = { it.label },
+            isSelected = { it == layer.colour.tone },
+            onSelect = { viewModel.onTextTone(layer.id, it) },
+        )
+
+        layer is Layer.Shape && control == LayerControl.TextColour -> ChipRow(
+            items = ColourTone.entries.filter { it != ColourTone.Clear },
+            label = { it.label },
+            isSelected = { it == layer.colour.tone },
+            onSelect = { viewModel.onShapeTone(layer.id, it) },
+        )
+
+        layer is Layer.Gradient &&
+            (control == LayerControl.ColourFrom || control == LayerControl.ColourTo) -> {
+            val atStart = control == LayerControl.ColourFrom
+            val colour = if (atStart) layer.from else layer.to
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                // Clear is a ramp idea — a fill of nothing is just a hidden layer.
+                items(
+                    ColourTone.entries.filter { !layer.solid || it != ColourTone.Clear },
+                    key = { it.name },
+                ) { tone ->
+                    PanelChip(label = tone.label, isSelected = tone == colour.tone) {
+                        viewModel.onGradientTone(layer.id, atStart, tone)
+                    }
+                }
+                // Turning this off is how a fill becomes a gradient, which is why they share a layer.
+                item {
+                    PanelChip(label = "Solid", isSelected = layer.solid) {
+                        viewModel.onToggleGradientSolid(layer.id)
+                    }
+                }
+            }
+        }
+
+        else -> Unit
+    }
+}
+
+/** One row of chips where one is chosen. The shape most of this panel takes. */
+@Composable
+private fun <T> ChipRow(
+    items: List<T>,
+    label: (T) -> String,
+    isSelected: (T) -> Boolean,
+    onSelect: (T) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        val atStart = control == LayerControl.ColourFrom
-        val colour = if (atStart) layer.from else layer.to
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            // Clear is a ramp idea — a fill of nothing is just a hidden layer.
-            items(
-                ColourTone.entries.filter { !layer.solid || it != ColourTone.Clear },
-                key = { it.name },
-            ) { tone ->
-                PanelChip(label = tone.label, isSelected = tone == colour.tone) {
-                    viewModel.onGradientTone(layer.id, atStart, tone)
-                }
-            }
-            // Turning this off is how a fill becomes a gradient, which is why they share a layer.
-            item {
-                PanelChip(label = "Solid", isSelected = layer.solid) {
-                    viewModel.onToggleGradientSolid(layer.id)
-                }
-            }
+        items(items) { item ->
+            PanelChip(label = label(item), isSelected = isSelected(item)) { onSelect(item) }
         }
     }
+}
 
-    // Beside the falloff slider, since both are about the gradient's shape — and because a second
-    // permanent chip row would give back the height the photo was given.
-    if (layer is Layer.Gradient && control == LayerControl.Falloff && !layer.solid) {
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(GradientStyle.entries.toList(), key = { it.name }) { style ->
-                PanelChip(label = style.label, isSelected = style == layer.spec.style) {
-                    viewModel.onGradientLayerSpec(layer.id) { it.copy(style = style) }
-                }
-            }
-        }
-    }
+/** What is selected and what a tap will do, in one line that is always in the same place. */
+@Composable
+private fun StatusLine(text: String) {
+    Text(
+        text = text,
+        color = Color(0xAAFFFFFF),
+        fontSize = 11.sp,
+        modifier = Modifier.padding(horizontal = 20.dp),
+    )
 }
 
 /** The single slider, showing whichever property the chips selected. */
@@ -1319,95 +1374,131 @@ private fun ControlSlider(
 }
 
 /**
- * How an area is chosen, and what to do with the layer. Blend cycles through its modes on tap
- * rather than opening a menu — a menu would need somewhere to appear, and that somewhere is the
- * photo.
+ * Zone one: what you are drawing with.
+ *
+ * Four tools in fixed slots that always fit, and the mode beside them. Deliberately not a scrolling
+ * row — a control that has to be scrolled to is a control that isn't there, which is exactly what
+ * happened to Delete when tools, mask actions and layer actions all shared one LazyRow.
  */
 @Composable
-private fun SelectionChips(
-    state: PerfectEditUiState,
-    viewModel: PerfectEditorViewModel,
-    layer: Layer?,
-    modifier: Modifier = Modifier,
-) {
-    LazyRow(
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 8.dp),
+private fun ToolBar(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        items(SelectionTool.entries.toList(), key = { it.name }) { tool ->
-            PanelChip(label = tool.label, isSelected = tool == state.selectionTool) {
-                viewModel.onSelectionTool(tool)
-            }
-        }
-        item {
-            PanelChip(
-                label = state.selectionMode.label,
-                isSelected = state.selectionMode != SelectionMode.Replace,
-                onClick = viewModel::onCycleSelectionMode,
-            )
-        }
-        // Only with the wand in hand: the difference between choosing this shape and choosing
-        // every colour like it anywhere in the frame.
-        if (state.selectionTool == SelectionTool.Wand) {
-            item {
-                PanelChip(
-                    label = if (state.wandContiguous) "This area" else "All alike",
-                    isSelected = !state.wandContiguous,
-                    onClick = viewModel::onToggleWandContiguous,
-                )
-            }
-        }
-        // Only with an area to act on: inverting an empty mask means "cover nothing", which would
-        // silently make the layer vanish rather than doing anything anyone asked for.
-        if (state.activeMask != null) {
-            item {
-                PanelChip(
-                    label = "Invert",
-                    isSelected = state.activeMask?.inverted == true,
-                    onClick = viewModel::onInvertMask,
-                )
-            }
-            item { PanelChip(label = "Clear", onClick = viewModel::onClearMask) }
-        }
-        if (layer != null) {
-            item { PanelChip(label = layer.blend.label) { viewModel.onCycleBlend(layer.id) } }
-            item { PanelChip(label = "Up") { viewModel.onMoveLayer(layer.id, up = true) } }
-            item { PanelChip(label = "Down") { viewModel.onMoveLayer(layer.id, up = false) } }
-            item { PanelChip(label = "Delete") { viewModel.onRemoveLayer(layer.id) } }
-        }
+        BackToMenu(onClick = viewModel::onBackToMenu)
+        Segmented(
+            options = SelectionTool.entries.map { it.label },
+            selectedIndex = SelectionTool.entries.indexOf(state.selectionTool),
+            onSelect = { viewModel.onSelectionTool(SelectionTool.entries[it]) },
+            modifier = Modifier.weight(1f),
+        )
+        Segmented(
+            options = SelectionMode.entries.map { it.label },
+            selectedIndex = SelectionMode.entries.indexOf(state.selectionMode),
+            onSelect = { viewModel.onSelectionMode(SelectionMode.entries[it]) },
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
 /**
- * The stack, said out loud: the word "Layers", a button that names what it does, then a chip per
- * layer with the newest on top.
+ * Zone two, with something selected: what to do with the area, and the way into the stack.
  *
- * Every effect has been its own layer with its own area since the layer engine landed. A sparkle
- * icon and unlabelled chips just never said so, which made a capability that already existed look
- * like one that didn't.
+ * Invert and Clear only appear with an area to act on — inverting an empty mask means "cover
+ * nothing", which would silently make the layer vanish rather than doing what was asked.
  */
 @Composable
-private fun LayerRow(
+private fun MaskBar(
     state: PerfectEditUiState,
-    onAdd: () -> Unit,
-    onSelectLayer: (Long) -> Unit,
-    onToggleVisible: (Long) -> Unit,
+    viewModel: PerfectEditorViewModel,
+    onOpenLayers: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(text = "Layers", color = Color(0xAAFFFFFF), fontSize = 10.sp)
-        PanelChip(label = "+ New", isSelected = true, onClick = onAdd)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(state.document.topDown, key = { it.id }) { layer ->
-                LayerChip(
-                    layer = layer,
-                    isSelected = layer.id == state.document.selectedId,
-                    onSelect = { onSelectLayer(layer.id) },
-                    onToggleVisible = { onToggleVisible(layer.id) },
+        LayersButton(state = state, onClick = onOpenLayers)
+        if (state.selectionTool == SelectionTool.Wand) {
+            PanelChip(
+                label = if (state.wandContiguous) "This area" else "All alike",
+                isSelected = !state.wandContiguous,
+                onClick = viewModel::onToggleWandContiguous,
+            )
+        }
+        if (state.activeMask != null) {
+            PanelChip(
+                label = "Invert",
+                isSelected = state.activeMask?.inverted == true,
+                onClick = viewModel::onInvertMask,
+            )
+            PanelChip(label = "Clear", onClick = viewModel::onClearMask)
+        }
+    }
+}
+
+/** Zone two, with nothing selected: add an effect, or go and look at the stack. */
+@Composable
+private fun StackBar(state: PerfectEditUiState, onAdd: () -> Unit, onOpenLayers: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        PanelChip(label = "+ Effect", isSelected = true, onClick = onAdd)
+        LayersButton(state = state, onClick = onOpenLayers)
+    }
+}
+
+/** The count is the point: it says the stack exists without anything having to be opened. */
+@Composable
+private fun LayersButton(state: PerfectEditUiState, onClick: () -> Unit) {
+    val count = state.document.layers.size
+    PanelChip(
+        label = if (count == 0) "Layers" else "Layers · $count",
+        isSelected = false,
+        onClick = onClick,
+    )
+}
+
+/**
+ * A row of choices where exactly one is on, sized so every option is always visible.
+ *
+ * The chips it replaces looked identical whether they were a mode, an action or a tool. A segment
+ * that is visibly part of a set says "one of these", which is what these actually are.
+ */
+@Composable
+private fun Segmented(
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0x14FFFFFF))
+            .padding(2.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        options.forEachIndexed { index, label ->
+            val isSelected = index == selectedIndex
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isSelected) Brand else Color.Transparent)
+                    .clickable { onSelect(index) }
+                    .padding(vertical = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    color = if (isSelected) Color.White else Color(0xAAFFFFFF),
+                    fontSize = 11.sp,
+                    maxLines = 1,
                 )
             }
         }
@@ -1673,43 +1764,6 @@ private fun ValueSlider(
             modifier = Modifier.padding(start = 10.dp).width(44.dp),
             textAlign = TextAlign.End,
         )
-    }
-}
-
-@Composable
-private fun LayerChip(
-    layer: Layer,
-    isSelected: Boolean,
-    onSelect: () -> Unit,
-    onToggleVisible: () -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isSelected) Brand else Color(0x22FFFFFF))
-            .border(
-                width = 1.dp,
-                color = if (isSelected) Brand else Color(0x33FFFFFF),
-                shape = RoundedCornerShape(10.dp),
-            )
-            .clickable(onClick = onSelect)
-            .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-    ) {
-        Text(
-            text = layer.name,
-            color = if (layer.isVisible) Color.White else Color(0x77FFFFFF),
-            fontSize = 11.sp,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-        )
-        IconButton(onClick = onToggleVisible, modifier = Modifier.size(28.dp)) {
-            Icon(
-                imageVector = if (layer.isVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                contentDescription = if (layer.isVisible) "Hide layer" else "Show layer",
-                tint = if (layer.isVisible) Color.White else Color(0x77FFFFFF),
-                modifier = Modifier.size(16.dp),
-            )
-        }
     }
 }
 

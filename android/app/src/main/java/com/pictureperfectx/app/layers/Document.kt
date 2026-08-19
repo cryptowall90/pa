@@ -40,6 +40,21 @@ data class Document(
         return copy(layers = remaining, selectedId = nextSelection)
     }
 
+    /**
+     * Copies a layer directly above itself and selects the copy.
+     *
+     * Worth having because of how this editor is actually used: the expensive part of a layer is
+     * usually the area it took ten seconds to draw, and wanting a second effect through the *same*
+     * area is the commonest thing there is. The copy carries the mask, so that work is kept.
+     */
+    fun duplicate(id: Long): Document {
+        val index = layers.indexOfFirst { it.id == id }
+        if (index < 0) return this
+        val twin = layers[index].withCommon(id = nextId, name = "${layers[index].name} copy")
+        val grown = layers.toMutableList().apply { add(index + 1, twin) }
+        return copy(layers = grown, selectedId = twin.id, nextId = nextId + 1)
+    }
+
     fun select(id: Long?): Document = copy(selectedId = id?.takeIf { candidate -> layers.any { it.id == candidate } })
 
     fun update(id: Long, transform: (Layer) -> Layer): Document =
