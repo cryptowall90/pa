@@ -12,6 +12,7 @@ package com.pictureperfectx.app.capture
  * full-image pass per layer on the CPU, so a layer that chained nine filters would multiply the
  * expensive part of rendering by nine.
  */
+@kotlinx.serialization.Serializable
 data class ToneAdjustments(
     val exposure: Int = 0,
     val contrast: Int = 0,

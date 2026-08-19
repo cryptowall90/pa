@@ -5,6 +5,7 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlinx.serialization.Serializable
 
 /**
  * One tap of the heal brush: the spot to cover and the clean skin it borrows from.
@@ -13,6 +14,7 @@ import kotlin.math.sqrt
  * render time. Searching twice would mean the preview and the export could pick different patches
  * and produce visibly different photos, which is the whole thing the layer model exists to prevent.
  */
+@Serializable
 data class HealDab(
     val centre: MaskPoint,
     val source: MaskPoint,

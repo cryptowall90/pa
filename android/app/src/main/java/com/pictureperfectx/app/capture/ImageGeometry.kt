@@ -4,12 +4,14 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlinx.serialization.Serializable
 
 /**
  * A crop rectangle in **normalized** coordinates (0..1) of the oriented image. Keeping it
  * resolution-independent is what makes the on-screen preview and the full-resolution export agree:
  * both apply the same fractions to whatever pixel size they happen to be working with.
  */
+@Serializable
 data class CropRect(
     val left: Float = 0f,
     val top: Float = 0f,
@@ -33,6 +35,7 @@ data class CropRect(
 data class PixelRect(val x: Int, val y: Int, val width: Int, val height: Int)
 
 /** Crop ratio presets. [ratio] is width/height; null means unconstrained. */
+@Serializable
 enum class AspectRatio(val label: String) {
     Original("Original"),
     Free("Free"),
@@ -64,6 +67,7 @@ enum class AspectRatio(val label: String) {
  * Order matters — the crop is expressed in the space of the already-rotated image, so changing it
  * would silently reframe every existing edit.
  */
+@Serializable
 data class ImageGeometry(
     val quarterTurns: Int = 0,          // clockwise, 0..3
     val straightenDegrees: Float = 0f,  // -45..45

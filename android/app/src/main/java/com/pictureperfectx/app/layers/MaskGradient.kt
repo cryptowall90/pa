@@ -8,8 +8,10 @@ import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlinx.serialization.Serializable
 
 /** The five gradient shapes, each a different way of measuring distance from the start. */
+@Serializable
 enum class GradientStyle(val label: String) {
     Linear("Linear"),
     Radial("Radial"),
@@ -24,6 +26,7 @@ enum class GradientStyle(val label: String) {
  * The two points are normalized like everything else a mask stores, so a gradient means the same
  * thing on the preview and on the full-resolution export.
  */
+@Serializable
 data class GradientSpec(
     val style: GradientStyle = GradientStyle.Linear,
     val start: MaskPoint = MaskPoint(0.5f, 0f),

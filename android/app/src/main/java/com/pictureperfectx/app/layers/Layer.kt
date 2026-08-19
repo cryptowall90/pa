@@ -2,12 +2,15 @@ package com.pictureperfectx.app.layers
 
 import com.pictureperfectx.app.capture.ToneAdjustments
 import kotlin.math.roundToInt
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 
 /**
  * How a layer's pixels combine with everything beneath it. The set is deliberately limited to modes
  * `PorterDuff` supports on every API level the app runs on, so a document renders identically on a
  * 2016 phone and a current one.
  */
+@Serializable
 enum class BlendMode(val label: String) {
     Normal("Normal"),
     Multiply("Multiply"),
@@ -24,10 +27,12 @@ enum class BlendMode(val label: String) {
  * screen size and the export at full size, and both mean the same thing. It also keeps a document
  * cheap to snapshot for undo — a full-resolution mask bitmap per history step would not be.
  */
+@Serializable
 data class Mask(
     val columns: Int = DEFAULT_RESOLUTION,
     val rows: Int = DEFAULT_RESOLUTION,
     /** Row-major coverage, 0 = hidden, 1 = fully painted. Empty means "no mask, show everything". */
+    @Serializable(with = CoverageSerializer::class)
     val coverage: FloatArray = FloatArray(0),
     /** Softness of the mask edge, 0..1. */
     val feather: Float = 0.35f,
@@ -239,6 +244,7 @@ data class MaskBounds(
  * paid for — that is what makes the stack non-destructive: reordering, hiding or deleting a layer
  * re-renders from the original every time.
  */
+@Serializable
 sealed interface Layer {
     val id: Long
     val name: String
@@ -248,6 +254,8 @@ sealed interface Layer {
     val mask: Mask
 
     /** An adjustment applied through this layer's mask and blend mode. */
+    @Serializable
+    @SerialName("tone")
     data class Tone(
         override val id: Long,
         override val name: String = "Tone",
@@ -259,6 +267,8 @@ sealed interface Layer {
     ) : Layer
 
     /** A named look from the filter catalog, applied at [intensity] through the mask. */
+    @Serializable
+    @SerialName("look")
     data class Look(
         override val id: Long,
         override val name: String = "Look",
@@ -277,6 +287,8 @@ sealed interface Layer {
      * correctly and is the re-entry point — a blur confined to a hand-drawn selection is bokeh
      * with no model involved at all.
      */
+    @Serializable
+    @SerialName("blur")
     data class Blur(
         override val id: Long,
         override val name: String = "Blur",
@@ -295,6 +307,8 @@ sealed interface Layer {
      * is no mask and the composite draws with alpha. Glyphs on a transparent bitmap were always
      * going to composite correctly.
      */
+    @Serializable
+    @SerialName("text")
     data class Text(
         override val id: Long,
         override val name: String = "Text",
@@ -320,6 +334,8 @@ sealed interface Layer {
      * matches the preview. Each dab carries the source it borrowed from, resolved once when it was
      * placed — searching again at export time could pick a different patch.
      */
+    @Serializable
+    @SerialName("heal")
     data class Heal(
         override val id: Long,
         override val name: String = "Heal",
@@ -337,6 +353,8 @@ sealed interface Layer {
      * neighbours of a similar colour, so flat areas soften and edges stay — which is the whole
      * difference between retouching and smearing.
      */
+    @Serializable
+    @SerialName("smooth")
     data class Smooth(
         override val id: Long,
         override val name: String = "Smooth",
@@ -353,6 +371,8 @@ sealed interface Layer {
      * Content like [Text], and placed the same way: a centre, a size as fractions of the frame, and
      * a rotation. Two handles — the centre to move it, a corner to size it.
      */
+    @Serializable
+    @SerialName("shape")
     data class Shape(
         override val id: Long,
         override val name: String = "Shape",
@@ -381,6 +401,8 @@ sealed interface Layer {
      * in the shadows warms them, pulling blue down in the highlights cools them. Separate tint
      * sliders would be a second mechanism arguing with this one over the same pixels.
      */
+    @Serializable
+    @SerialName("curve")
     data class Curve(
         override val id: Long,
         override val name: String = "Curve",
@@ -398,6 +420,8 @@ sealed interface Layer {
      * same coverage function — so a colour gradient and a masked one placed identically line up
      * exactly, rather than nearly.
      */
+    @Serializable
+    @SerialName("gradient")
     data class Gradient(
         override val id: Long,
         override val name: String = "Gradient",
@@ -426,6 +450,7 @@ sealed interface Layer {
  * nothing else in the app has, and drives the same one-slider-and-chips pattern as every other
  * control. [alpha] of 0 is what makes a gradient fade into the photo rather than over it.
  */
+@Serializable
 data class GradientColour(
     /** 0..360 around the wheel. Ignored unless [tone] is [ColourTone.Hue]. */
     val hue: Float = 20f,
@@ -438,6 +463,7 @@ data class GradientColour(
  * Black and white are most of what a gradient wash is actually used for, and [Clear] is what lets a
  * gradient fade *into* the photo rather than sitting over all of it.
  */
+@Serializable
 enum class ColourTone(val label: String) {
     Hue("Colour"),
     Black("Black"),
@@ -465,6 +491,7 @@ fun Layer.withCommon(
 }
 
 /** A line has no inside, so it is always stroked whatever the stroke width says. */
+@Serializable
 enum class ShapeKind(val label: String) {
     Rectangle("Rectangle"),
     Ellipse("Ellipse"),
@@ -477,6 +504,7 @@ enum class ShapeKind(val label: String) {
  * Three that every Android device has, rather than shipping font files: a missing font renders as
  * something else entirely, and nothing about that is obvious from the layer that asked for it.
  */
+@Serializable
 enum class TextFont(val label: String) {
     Sans("Sans"),
     Serif("Serif"),

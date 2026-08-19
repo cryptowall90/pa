@@ -4,11 +4,14 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.serialization.Serializable
 
 /** A point on a lasso path, in the same normalized 0..1 space masks are stored in. */
+@Serializable
 data class MaskPoint(val x: Float, val y: Float)
 
 /** How a new selection combines with whatever the layer's mask already covers. */
+@Serializable
 enum class SelectionMode(val label: String) {
     Replace("New"),
     Add("Add"),

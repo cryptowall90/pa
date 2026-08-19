@@ -2,8 +2,10 @@ package com.pictureperfectx.app.layers
 
 import kotlin.math.abs
 import kotlin.math.sqrt
+import kotlinx.serialization.Serializable
 
 /** A control point on a tone curve: input level on [x], the level it maps to on [y]. Both 0..1. */
+@Serializable
 data class CurvePoint(val x: Float, val y: Float)
 
 /**
@@ -13,6 +15,7 @@ data class CurvePoint(val x: Float, val y: Float)
  * in the shadows warms them, pulling blue down in the highlights cools them. That's the same tool
  * professional work uses, rather than a separate pair of tint sliders that would fight with it.
  */
+@Serializable
 enum class CurveChannel(val label: String) {
     Rgb("RGB"),
     Red("Red"),
@@ -21,6 +24,7 @@ enum class CurveChannel(val label: String) {
 }
 
 /** The four curves of one layer. */
+@Serializable
 data class CurveSpec(
     val rgb: List<CurvePoint> = Curves.IDENTITY,
     val red: List<CurvePoint> = Curves.IDENTITY,

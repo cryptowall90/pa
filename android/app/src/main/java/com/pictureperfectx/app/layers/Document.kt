@@ -8,6 +8,7 @@ package com.pictureperfectx.app.layers
  * operation returns a new document rather than mutating this one, which is what lets undo be a
  * simple stack of snapshots instead of a set of inverse operations.
  */
+@kotlinx.serialization.Serializable
 data class Document(
     val layers: List<Layer> = emptyList(),
     val selectedId: Long? = null,
