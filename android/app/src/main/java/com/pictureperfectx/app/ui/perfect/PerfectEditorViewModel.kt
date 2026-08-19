@@ -39,6 +39,7 @@ import com.pictureperfectx.app.layers.MaskBrush
 import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskLasso
 import com.pictureperfectx.app.layers.MaskPoint
+import com.pictureperfectx.app.layers.MaskWand
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
@@ -94,6 +95,7 @@ enum class SelectionTool(val label: String) {
     Lasso("Lasso"),
     Brush("Brush"),
     Fade("Fade"),
+    Wand("Wand"),
 }
 
 /**
@@ -125,7 +127,8 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
     ShapeStroke("Outline"),
     SmoothAmount("Amount"),
     HealSize("Spot size"),
-    BrushSize("Brush size");
+    BrushSize("Brush size"),
+    WandTolerance("Tolerance");
 
     companion object {
         /** What [layer] offers, plus brush size when the brush is what's in hand. */
@@ -156,6 +159,7 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
             // gradient layer has its own and offered it above.
             if (layer.mask.gradient != null && layer !is Layer.Gradient) add(Falloff)
             if (tool == SelectionTool.Brush) add(BrushSize)
+            if (tool == SelectionTool.Wand) add(WandTolerance)
         }
     }
 }
@@ -182,6 +186,10 @@ data class PerfectEditUiState(
     val pendingSelection: Mask? = null,
     /** Brush radius as a fraction of the image's shorter edge. */
     val brushRadius: Float = 0.12f,
+    /** How alike a colour has to be for the wand to take it. */
+    val wandTolerance: Float = MaskWand.DEFAULT_TOLERANCE,
+    /** Whether the wand takes only the shape it was tapped on, or every colour like it. */
+    val wandContiguous: Boolean = true,
     /** Heal spot radius, likewise. Much smaller: a blemish is not a brush stroke. */
     val healRadius: Float = 0.02f,
     val isSaving: Boolean = false,
@@ -1012,6 +1020,52 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onBrushRadius(radius: Float) = _state.update { it.copy(brushRadius = radius.coerceIn(0.02f, 0.5f)) }
+
+    fun onWandTolerance(value: Float) = _state.update {
+        it.copy(wandTolerance = value.coerceIn(MaskWand.MIN_TOLERANCE, MaskWand.MAX_TOLERANCE))
+    }
+
+    /** The difference between choosing this shape and choosing every colour like it. */
+    fun onToggleWandContiguous() = _state.update { it.copy(wandContiguous = !it.wandContiguous) }
+
+    /**
+     * A tap with the wand: takes the area matching the colour underneath it.
+     *
+     * The photo is sampled down to the mask's own grid rather than read at full resolution — the
+     * mask was never finer than that, and a 12MP flood fill would stall the tap it came from.
+     *
+     * Deliberately samples the **rendered** canvas, which is what is on screen: tapping a sky that
+     * a previous layer has already turned orange should choose the orange the user can see.
+     */
+    fun onWandAt(x: Float, y: Float) {
+        val state = _state.value
+        val canvas = state.canvas ?: return
+        val layer = state.document.selected
+        val base = selectionBase(state, layer, state.selectionMode)
+        val grid = sampleToGrid(canvas, base.columns, base.rows) ?: return
+        val chosen = MaskWand.select(
+            grid = grid,
+            columns = base.columns,
+            rows = base.rows,
+            mask = base,
+            x = x,
+            y = y,
+            tolerance = state.wandTolerance,
+            contiguous = state.wandContiguous,
+            mode = state.selectionMode,
+        )
+        applySelection(state, layer, chosen, record = true)
+    }
+
+    /** The canvas as one packed-ARGB value per mask cell. */
+    private fun sampleToGrid(canvas: Bitmap, columns: Int, rows: Int): IntArray? = runCatching {
+        if (columns <= 0 || rows <= 0) return null
+        val scaled = Bitmap.createScaledBitmap(canvas, columns, rows, true)
+        val pixels = IntArray(columns * rows)
+        scaled.getPixels(pixels, 0, columns, 0, 0, columns, rows)
+        if (scaled !== canvas && !scaled.isRecycled) scaled.recycle()
+        pixels
+    }.getOrNull()
 
     /**
      * How softly the effect stops at the area's edge. Routes to whichever area is live — the

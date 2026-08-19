@@ -106,6 +106,7 @@ import com.pictureperfectx.app.layers.Mask
 import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskOutline
 import com.pictureperfectx.app.layers.MaskPoint
+import com.pictureperfectx.app.layers.MaskWand
 import com.pictureperfectx.app.layers.PathCurve
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
@@ -180,6 +181,7 @@ fun PerfectEditorScreen(
                 onGradientStart = viewModel::onGradientStart,
                 onGradient = viewModel::onGradientDrawn,
                 onHeal = viewModel::onHealAt,
+                onWand = viewModel::onWandAt,
                 modifier = Modifier.weight(1f).fillMaxWidth().statusBarsPadding(),
             )
 
@@ -405,6 +407,7 @@ private fun EditorStage(
     onGradientStart: () -> Unit,
     onGradient: (MaskPoint, MaskPoint) -> Unit,
     onHeal: (Float, Float) -> Unit,
+    onWand: (Float, Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var stageSize by remember { mutableStateOf(IntSize.Zero) }
@@ -546,6 +549,15 @@ private fun EditorStage(
                                     val point = first.position.normalizedIn(latestBounds)
                                     if (point.x in 0f..1f && point.y in 0f..1f) {
                                         onHeal(point.x, point.y)
+                                    }
+                                    touch = null
+                                }
+                                // Like healing, the wand is a tap rather than a drag, so it needs
+                                // no drag state either.
+                                tool == SelectionTool.Wand -> {
+                                    val point = first.position.normalizedIn(latestBounds)
+                                    if (point.x in 0f..1f && point.y in 0f..1f) {
+                                        onWand(point.x, point.y)
                                     }
                                     touch = null
                                 }
@@ -947,16 +959,26 @@ private fun EffectsControls(
                 onChange = viewModel::onBrushRadius,
             )
         }
+        if (state.selectionTool == SelectionTool.Wand) {
+            ValueSlider(
+                value = state.wandTolerance,
+                range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
+                readout = "${(state.wandTolerance * 100).roundToInt()}",
+                onChange = viewModel::onWandTolerance,
+            )
+        }
         // An area can be softened before its effect is chosen, the same as after.
         if (state.pendingSelection != null) {
             FeatherSlider(state = state, viewModel = viewModel)
         }
         Text(
             text = if (state.pendingSelection == null) {
-                if (state.selectionTool == SelectionTool.Fade) {
-                    "Drag across the photo, then add an effect to fade it in along the run."
-                } else {
-                    "Draw around an area, then add an effect to apply it only there."
+                when (state.selectionTool) {
+                    SelectionTool.Fade ->
+                        "Drag across the photo, then add an effect to fade it in along the run."
+                    SelectionTool.Wand ->
+                        "Tap a colour to choose everything like it, then add an effect."
+                    else -> "Draw around an area, then add an effect to apply it only there."
                 }
             } else {
                 "Area ready — add an effect and it applies only there."
@@ -1277,6 +1299,13 @@ private fun ControlSlider(
             onChange = viewModel::onBrushRadius,
         )
 
+        control == LayerControl.WandTolerance -> ValueSlider(
+            value = state.wandTolerance,
+            range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
+            readout = "${(state.wandTolerance * 100).roundToInt()}",
+            onChange = viewModel::onWandTolerance,
+        )
+
         control == LayerControl.Feather -> FeatherSlider(state = state, viewModel = viewModel)
 
         else -> ValueSlider(
@@ -1317,6 +1346,17 @@ private fun SelectionChips(
                 isSelected = state.selectionMode != SelectionMode.Replace,
                 onClick = viewModel::onCycleSelectionMode,
             )
+        }
+        // Only with the wand in hand: the difference between choosing this shape and choosing
+        // every colour like it anywhere in the frame.
+        if (state.selectionTool == SelectionTool.Wand) {
+            item {
+                PanelChip(
+                    label = if (state.wandContiguous) "This area" else "All alike",
+                    isSelected = !state.wandContiguous,
+                    onClick = viewModel::onToggleWandContiguous,
+                )
+            }
         }
         // Only with an area to act on: inverting an empty mask means "cover nothing", which would
         // silently make the layer vanish rather than doing anything anyone asked for.
