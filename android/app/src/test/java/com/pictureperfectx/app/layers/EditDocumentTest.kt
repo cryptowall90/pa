@@ -14,6 +14,9 @@ import org.junit.Test
  * An edit that reopens *nearly* the same is worse than one that doesn't reopen at all — the first
  * kind you don't notice until the photo is already wrong. So this holds the round trip to equality
  * across every layer kind rather than spot-checking a couple of fields.
+ *
+ * The single deliberate exception is a mask's soft edge, which is stored to 8 bits and so rounds by
+ * up to a 255th. That one is checked to a tolerance, and separately, so the strict test stays strict.
  */
 class EditDocumentTest {
 
@@ -21,6 +24,25 @@ class EditDocumentTest {
         Mask.forRatio(4f / 3f),
         listOf(MaskPoint(0.2f, 0.2f), MaskPoint(0.8f, 0.25f), MaskPoint(0.6f, 0.8f)),
     )
+
+    /**
+     * A hard-edged mask, exercising every field a mask has.
+     *
+     * Deliberately all-or-nothing coverage: values land exactly on the 8-bit grid the format stores,
+     * so this can be held to *equality*. A soft edge cannot be — see the antialiasing test below —
+     * and mixing the two would leave the strict check unable to say anything strictly.
+     */
+    private fun crisp(): Mask {
+        val blank = Mask.blank(64, 48)
+        return blank.copy(
+            coverage = FloatArray(blank.columns * blank.rows) {
+                if (it % blank.columns < blank.columns / 2) 1f else 0f
+            },
+            feather = 0.2f,
+            inverted = true,
+            path = listOf(MaskPoint(0.1f, 0.1f), MaskPoint(0.9f, 0.2f), MaskPoint(0.5f, 0.9f)),
+        )
+    }
 
     /** One of everything, each carrying a value that isn't its default. */
     private fun everything(): Document {
@@ -42,7 +64,7 @@ class EditDocumentTest {
         document = document.add {
             Layer.Heal(it, dabs = listOf(HealDab(MaskPoint(0.4f, 0.4f), MaskPoint(0.5f, 0.45f), 0.02f)))
         }
-        document = document.add { Layer.Smooth(it, amount = 70, mask = lassoed()) }
+        document = document.add { Layer.Smooth(it, amount = 70, mask = crisp()) }
         document = document.add {
             Layer.Shape(it, kind = ShapeKind.Ellipse, width = 0.5f, height = 0.2f, stroke = 0.01f)
         }
@@ -63,7 +85,7 @@ class EditDocumentTest {
                 to = GradientColour(tone = ColourTone.Clear),
                 blend = BlendMode.Overlay,
                 opacity = 0.72f,
-                mask = lassoed(),
+                mask = crisp(),
             )
         }
         return document
@@ -119,6 +141,23 @@ class EditDocumentTest {
         val reopened = EditDocument.decode(EditDocument.encode(edit))!!
         assertEquals(lassoed().path, reopened.document.layers[0].mask.path)
         assertEquals(faded.gradient, reopened.document.layers[1].mask.gradient)
+    }
+
+    @Test
+    fun `a soft edge comes back within a step of where it was`() {
+        // The one thing that isn't exact. A lasso's antialiased rim carries values between 0 and 1
+        // that don't land on the 8-bit grid, so they round — by less than a level of the coverage
+        // grid, which is itself far coarser than the photo it will be scaled over.
+        val edit = EditDocument(document = Document().add { Layer.Tone(it, mask = lassoed()) })
+        val reopened = EditDocument.decode(EditDocument.encode(edit))!!
+
+        val before = lassoed().coverage
+        val after = reopened.document.layers.single().mask.coverage
+        assertEquals("same grid", before.size, after.size)
+        before.indices.forEach { index ->
+            assertEquals("cell $index", before[index], after[index], 1f / 255f)
+        }
+        assertTrue("and the soft edge is still soft", after.any { it > 0f && it < 1f })
     }
 
     @Test
