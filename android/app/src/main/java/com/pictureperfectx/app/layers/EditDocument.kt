@@ -37,7 +37,10 @@ data class EditDocument(
             encodeDefaults = false
         }
 
-        fun encode(edit: EditDocument): String = json.encodeToString(edit.copy(version = VERSION))
+        // Named serializers rather than the reified overloads: one fewer import to lose, and no
+        // chance of resolving to the two-argument form and failing to infer anything.
+        fun encode(edit: EditDocument): String =
+            json.encodeToString(serializer(), edit.copy(version = VERSION))
 
         /**
          * Reads an edit back, or null if the text isn't one.
@@ -47,6 +50,6 @@ data class EditDocument(
          * editor down.
          */
         fun decode(text: String): EditDocument? =
-            runCatching { json.decodeFromString<EditDocument>(text) }.getOrNull()
+            runCatching { json.decodeFromString(serializer(), text) }.getOrNull()
     }
 }

@@ -15,6 +15,7 @@ import com.pictureperfectx.app.capture.ImageTransformer
 import com.pictureperfectx.app.capture.PhotoSaver
 import com.pictureperfectx.app.capture.ToneAdjustments
 import com.pictureperfectx.app.capture.ToneBand
+import com.pictureperfectx.app.data.EditStore
 import com.pictureperfectx.app.data.PhotoEntity
 import com.pictureperfectx.app.filter.Filter
 import com.pictureperfectx.app.filter.FilterCatalog
@@ -25,6 +26,7 @@ import com.pictureperfectx.app.layers.CurvePoint
 import com.pictureperfectx.app.layers.CurveSpec
 import com.pictureperfectx.app.layers.Curves
 import com.pictureperfectx.app.layers.Document
+import com.pictureperfectx.app.layers.EditDocument
 import com.pictureperfectx.app.layers.GradientSpec
 import com.pictureperfectx.app.layers.GradientStyle
 import com.pictureperfectx.app.layers.Heal
@@ -267,6 +269,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     // What the live area looked like when a gradient drag began; see onGradientStart.
     private var gradientBase: Mask? = null
 
+    // The gallery row the editor was opened on, if the photo is one of ours. Saving reads it to
+    // point the new photo back at the same original rather than at this one.
+    private var openedPhoto: PhotoEntity? = null
+    private var openedUri: Uri? = null
+
     /**
      * The look catalog, shared with the chooser so both name the same thing.
      *
@@ -282,11 +289,38 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(PerfectEditUiState())
     val state: StateFlow<PerfectEditUiState> = _state.asStateFlow()
 
+    /**
+     * Opens [uri] for editing, with its layers if it has any.
+     *
+     * A photo the editor produced is reopened *as the edit that made it*: the original comes back
+     * along with the stack, so every layer is still live and every revision starts from pixels that
+     * have only been through JPEG once. Without a stack — or with one whose original has since been
+     * deleted — it opens as the flat photo it is.
+     */
     fun load(uri: Uri) {
         viewModelScope.launch {
-            val loaded = withContext(Dispatchers.IO) {
-                BitmapIO.loadForEdit(getApplication(), uri, FULL_MAX_EDGE)
+            openedUri = uri
+            val photo = runCatching { repository.findByUri(uri.toString()) }.getOrNull()
+            openedPhoto = photo
+
+            val stack = photo?.takeIf { it.isEdited }?.let { edited ->
+                withContext(Dispatchers.IO) { EditStore.read(getApplication(), edited.editUri) }
             }
+            val openUri = if (stack != null) Uri.parse(photo!!.sourceUri) else uri
+
+            var loaded = withContext(Dispatchers.IO) {
+                BitmapIO.loadForEdit(getApplication(), openUri, FULL_MAX_EDGE)
+            }
+            // The original is the user's own file and they may have deleted it since. Falling back
+            // to the flat photo is better than an editor that won't open.
+            val lostOriginal = stack != null && loaded == null
+            if (lostOriginal) {
+                loaded = withContext(Dispatchers.IO) {
+                    BitmapIO.loadForEdit(getApplication(), uri, FULL_MAX_EDGE)
+                }
+            }
+            val restored = stack.takeUnless { lostOriginal }
+
             val full = loaded?.bitmap
             val preview = full?.let { scaleToMaxEdge(it, PREVIEW_MAX_EDGE) }
             sourceFull = full
@@ -298,11 +332,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             history = History()
             _state.update {
                 PerfectEditUiState(
-                    geometry = ImageGeometry(),
+                    geometry = restored?.geometry ?: ImageGeometry(),
+                    document = restored?.document ?: Document(),
                     canvas = preview,
                     ready = full != null,
                     notice = when {
                         loaded == null -> "This photo couldn't be opened for editing."
+                        lostOriginal ->
+                            "The photo this was edited from is gone, so you're editing the saved " +
+                                "version and its layers couldn't be reopened."
+                        restored != null -> restored.document.layers.size.let { count ->
+                            "Reopened with $count ${if (count == 1) "layer" else "layers"}."
+                        }
                         loaded.degraded ->
                             "This device can't decode the raw file, so you're editing its embedded " +
                                 "preview — the saved photo will be lower resolution than the original."
@@ -310,6 +351,31 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                     },
                 )
             }
+            // A restored stack has to be composited before it is visible; a fresh photo is already
+            // exactly what is on screen.
+            if (restored != null && full != null) renderRestored(restored.geometry)
+        }
+    }
+
+    /**
+     * Composites a reopened edit onto its preview.
+     *
+     * Deliberately not [applyGeometry], which re-fits the crop to whatever aspect is locked — that
+     * is right when the user has just changed the framing and wrong here, where the crop being
+     * restored is the one they already chose.
+     */
+    private fun renderRestored(geometry: ImageGeometry) {
+        val source = sourcePreview ?: return
+        viewModelScope.launch {
+            val oriented = withContext(Dispatchers.Default) {
+                runCatching { ImageTransformer.orient(source, geometry) }.getOrNull()
+            } ?: return@launch
+            orientedPreview = oriented
+            val canvas = withContext(Dispatchers.Default) {
+                runCatching { LayerRenderer.render(getApplication(), oriented, _state.value.document) }
+                    .getOrDefault(oriented)
+            }
+            _state.update { it.copy(canvas = canvas) }
         }
     }
 
@@ -460,6 +526,13 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                     val out = LayerRenderer.render(getApplication(), cropped, document)
                     if (out !== cropped && cropped !== source && !cropped.isRecycled) cropped.recycle()
                     val saved = PhotoSaver.save(getApplication(), out)
+                    // The stack goes beside the photo, so this edit can be reopened and revised
+                    // rather than being the last thing that will ever happen to it.
+                    val editUri = EditStore.write(
+                        context = getApplication(),
+                        baseName = saved.displayName.substringBeforeLast('.'),
+                        edit = EditDocument(geometry = geometry, document = document),
+                    )
                     repository.record(
                         PhotoEntity(
                             uri = saved.uri.toString(),
@@ -469,6 +542,13 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                             lensFacing = "edit",
                             width = saved.width,
                             height = saved.height,
+                            // Always the original, never this export: revising an edit re-points at
+                            // the same source, so the chain stays one link long and every revision
+                            // starts from pixels that have been through JPEG once.
+                            sourceUri = editUri?.let {
+                                openedPhoto?.sourceUri ?: openedUri?.toString()
+                            },
+                            editUri = editUri,
                         ),
                     )
                     if (out !== source && !out.isRecycled) out.recycle()
