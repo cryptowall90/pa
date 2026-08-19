@@ -925,12 +925,15 @@ private fun EffectsControls(
     // actions, with Delete off the right-hand edge.
     ToolBar(state = state, viewModel = viewModel)
 
-    // Mask actions, and only when there is a mask for them to act on.
-    if (state.activeMask != null || state.document.selected != null) {
-        MaskBar(state = state, viewModel = viewModel, onOpenLayers = onOpenLayers)
-    } else {
-        StackBar(state = state, onAdd = { onAddingEffect(true) }, onOpenLayers = onOpenLayers)
-    }
+    // Zone two: the stack, and what to do with the area. Adding an effect and reaching the layers
+    // are always here — not conditionally, as they were when the stack lived in a scrolling row
+    // that a selected layer pushed off the end of.
+    StackBar(
+        state = state,
+        viewModel = viewModel,
+        onAdd = { onAddingEffect(true) },
+        onOpenLayers = onOpenLayers,
+    )
 
     if (addingEffect) {
         EffectPickerRow(
@@ -976,7 +979,7 @@ private fun describe(layer: Layer, state: PerfectEditUiState): String {
         SelectionTool.Fade -> "drag to fade it"
         SelectionTool.Wand -> "tap a colour to reshape it"
     }
-    return "${layer.name} · ${state.selectionMode.label.lowercase()} on $where · $next"
+    return "${layer.name} · applies to $where · $next"
 }
 
 /**
@@ -1404,15 +1407,17 @@ private fun ToolBar(state: PerfectEditUiState, viewModel: PerfectEditorViewModel
 }
 
 /**
- * Zone two, with something selected: what to do with the area, and the way into the stack.
+ * Zone two: the stack, and what to do with the area.
  *
- * Invert and Clear only appear with an area to act on — inverting an empty mask means "cover
- * nothing", which would silently make the layer vanish rather than doing what was asked.
+ * Add and Layers are always present — a selected layer used to push them off the end of a scrolling
+ * row. Invert and Clear only appear with an area to act on, since inverting an empty mask means
+ * "cover nothing", which would silently make the layer vanish rather than doing what was asked.
  */
 @Composable
-private fun MaskBar(
+private fun StackBar(
     state: PerfectEditUiState,
     viewModel: PerfectEditorViewModel,
+    onAdd: () -> Unit,
     onOpenLayers: () -> Unit,
 ) {
     Row(
@@ -1420,6 +1425,7 @@ private fun MaskBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        PanelChip(label = "+ Effect", isSelected = true, onClick = onAdd)
         LayersButton(state = state, onClick = onOpenLayers)
         if (state.selectionTool == SelectionTool.Wand) {
             PanelChip(
@@ -1436,19 +1442,6 @@ private fun MaskBar(
             )
             PanelChip(label = "Clear", onClick = viewModel::onClearMask)
         }
-    }
-}
-
-/** Zone two, with nothing selected: add an effect, or go and look at the stack. */
-@Composable
-private fun StackBar(state: PerfectEditUiState, onAdd: () -> Unit, onOpenLayers: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        PanelChip(label = "+ Effect", isSelected = true, onClick = onAdd)
-        LayersButton(state = state, onClick = onOpenLayers)
     }
 }
 
