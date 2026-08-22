@@ -226,6 +226,14 @@ data class PerfectEditUiState(
     val wandTolerance: Float = MaskWand.DEFAULT_TOLERANCE,
     /** Whether the wand takes only the shape it was tapped on, or every colour like it. */
     val wandContiguous: Boolean = true,
+    /**
+     * The photo on its own: every outline, handle, dot and magnifier put away.
+     *
+     * Distinct from the press-and-hold peek, which shows the photo *before* the edit. This shows
+     * the edit — exactly what saving would produce — which is the only way to judge it, because
+     * the marks that say where an effect applies sit on top of the thing being judged.
+     */
+    val previewing: Boolean = false,
     /** Heal spot radius, likewise. Much smaller: a blemish is not a brush stroke. */
     val healRadius: Float = 0.02f,
     val isSaving: Boolean = false,
@@ -241,7 +249,7 @@ data class PerfectEditUiState(
      * Areas can be drawn whenever effects are showing, with or without a layer selected — drawing
      * first and choosing the effect after is the whole point of a pending selection.
      */
-    val canSelect: Boolean get() = panel == EditorPanel.Effects
+    val canSelect: Boolean get() = panel == EditorPanel.Effects && !previewing
 
     /**
      * A crop that has been set but not saved is invisible once its controls are put away, since the
@@ -249,7 +257,9 @@ data class PerfectEditUiState(
      * being a surprise at save time; an untouched photo shows nothing at all.
      */
     val showsCropPreview: Boolean
-        get() = (panel == EditorPanel.Closed || panel == EditorPanel.Menu) && !geometry.crop.isFull
+        get() = (panel == EditorPanel.Closed || panel == EditorPanel.Menu) &&
+            !geometry.crop.isFull &&
+            !previewing
 
     /** The layer whose mask is being edited, if drawing is aimed at one. */
     val targetedLayer: Layer?
@@ -1125,6 +1135,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * Without it the only way to stop editing a layer was to add another one, which is a strange
      * thing to have to do to simply look at the photo.
      */
+    /**
+     * The photo on its own, and back again.
+     *
+     * The marks that say where an effect applies sit on top of the thing being judged, so there was
+     * no way to see the edit itself without saving it and looking in the gallery.
+     */
+    fun onTogglePreview() = _state.update { it.copy(previewing = !it.previewing) }
+
     fun onDeselectLayer() {
         _state.update { it.copy(document = it.document.select(null), maskTarget = null) }
     }

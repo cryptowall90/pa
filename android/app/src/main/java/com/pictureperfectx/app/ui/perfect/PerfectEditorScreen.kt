@@ -201,7 +201,11 @@ fun PerfectEditorScreen(
             ) {
                 state.notice?.let { CameraNotice(text = it, onDismiss = viewModel::consumeNotice) }
 
-                when (state.panel) {
+                if (state.previewing) {
+                    // The controls stand down too, so the photo gets the screen — but the row below
+                    // stays put, so getting back is the same tap that got here.
+                    StatusLine("The edit as it will save — no outlines, no handles. Tap the eye to keep editing.")
+                } else when (state.panel) {
                     EditorPanel.Closed -> Unit
 
                     EditorPanel.Menu -> MenuRow(onOpen = viewModel::onOpenPanel)
@@ -260,6 +264,7 @@ fun PerfectEditorScreen(
                     onDraft = viewModel::saveDraft,
                     onSave = { viewModel.save(onSaved) },
                     onToggleMenu = viewModel::onToggleMenu,
+                    onTogglePreview = viewModel::onTogglePreview,
                 )
             }
         }
@@ -294,6 +299,7 @@ private fun ActionRow(
     onDraft: () -> Unit,
     onSave: () -> Unit,
     onToggleMenu: () -> Unit,
+    onTogglePreview: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -315,6 +321,17 @@ private fun ActionRow(
         )
 
         EditCircle(isOpen = state.panel != EditorPanel.Closed, onClick = onToggleMenu)
+
+        // The photo on its own. Every mark that says *where* an effect applies sits on top of the
+        // thing being judged, so without this there was no way to see the edit itself short of
+        // saving it and going to the gallery.
+        ActionIcon(
+            icon = if (state.previewing) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+            description = if (state.previewing) "Back to editing" else "Preview without overlays",
+            enabled = state.ready,
+            tint = if (state.previewing) Brand else Color.White,
+            onClick = onTogglePreview,
+        )
 
         ActionIcon(
             icon = Icons.Filled.Refresh,
@@ -515,8 +532,9 @@ private fun EditorStage(
                 },
         )
 
-        // Every overlay describes the edit, so a peek at the photo underneath shows none of them.
-        if (!peeking) {
+        // Every overlay describes the edit rather than being part of it — so both a peek at the
+        // photo underneath and a clean preview of the edit itself show none of them.
+        if (!peeking && !state.previewing) {
             DrawingLayer(
                 state = state,
                 image = image,
@@ -579,173 +597,184 @@ private fun EditorStage(
                     val minStep = 3.dp.toPx()
                     val touchSlop = viewConfiguration.touchSlop
 
-                    awaitEachGesture {
-                        val first = awaitFirstDown(requireUnconsumed = false)
-                        var transforming = false
-                        var painting = false
-                        var tracing = false
-                        var sweeping = false
-                        var gradientStart = MaskPoint(0f, 0f)
-                        var grabbed = -1
-                        var lastCentroid = first.position
-                        var lastSpan = 0f
-                        var began = false
+                    // Any of this block's keys changing restarts it, cancelling whatever gesture was
+                    // in progress. Without the reset below, a stroke cut short that way leaves its
+                    // half-drawn loop, its magnifier or a stuck peek painted on the photo with no
+                    // gesture left alive to finish them — a red circle sitting there over handles
+                    // belonging to a different shape entirely.
+                    try {
+                        awaitEachGesture {
+                            val first = awaitFirstDown(requireUnconsumed = false)
+                            var transforming = false
+                            var painting = false
+                            var tracing = false
+                            var sweeping = false
+                            var gradientStart = MaskPoint(0f, 0f)
+                            var grabbed = -1
+                            var lastCentroid = first.position
+                            var lastSpan = 0f
+                            var began = false
 
-                        /**
-                         * Starts whatever this tool does with a drag, from where the finger landed.
-                         *
-                         * Deliberately not called on the down event. Nothing can commit until the
-                         * finger has either moved or lifted, which is what lets a held finger mean
-                         * "show me the photo underneath" — and what stops the first finger of a
-                         * pinch leaving a stray wand selection or heal dab behind.
-                         */
-                        fun begin() {
-                            if (began || !canSelect) return
-                            began = true
-                            touch = first.position
-                            when {
-                                grabbed >= 0 -> Unit
-                                // The tap tools have nothing to begin: they act on release.
-                                healing || tool == SelectionTool.Wand -> touch = null
-                                tool == SelectionTool.Lasso -> {
-                                    tracing = true
-                                    trace = listOf(first.position)
-                                }
-                                tool == SelectionTool.Fade -> {
-                                    sweeping = true
-                                    gradientStart = first.position.normalizedIn(latestBounds)
-                                    onGradientStart()
-                                }
-                                else -> {
-                                    painting = true
-                                    paintAt(first.position, latestBounds, onPaint)
+                            /**
+                             * Starts whatever this tool does with a drag, from where the finger landed.
+                             *
+                             * Deliberately not called on the down event. Nothing can commit until the
+                             * finger has either moved or lifted, which is what lets a held finger mean
+                             * "show me the photo underneath" — and what stops the first finger of a
+                             * pinch leaving a stray wand selection or heal dab behind.
+                             */
+                            fun begin() {
+                                if (began || !canSelect) return
+                                began = true
+                                touch = first.position
+                                when {
+                                    grabbed >= 0 -> Unit
+                                    // The tap tools have nothing to begin: they act on release.
+                                    healing || tool == SelectionTool.Wand -> touch = null
+                                    tool == SelectionTool.Lasso -> {
+                                        tracing = true
+                                        trace = listOf(first.position)
+                                    }
+                                    tool == SelectionTool.Fade -> {
+                                        sweeping = true
+                                        gradientStart = first.position.normalizedIn(latestBounds)
+                                        onGradientStart()
+                                    }
+                                    else -> {
+                                        painting = true
+                                        paintAt(first.position, latestBounds, onPaint)
+                                    }
                                 }
                             }
-                        }
 
-                        if (canSelect) {
-                            grabbed = handleAt(latestHandles, first.position, latestBounds, handleRadius)
-                        }
+                            if (canSelect) {
+                                grabbed = handleAt(latestHandles, first.position, latestBounds, handleRadius)
+                            }
 
-                        // Nothing has happened yet. Whichever of these comes first decides what this
-                        // gesture was: a move, a second finger, a lift, or a finger held still.
-                        val settled = withTimeoutOrNull(PEEK_DELAY_MS) {
-                            var outcome = Settled.Lifted
+                            // Nothing has happened yet. Whichever of these comes first decides what this
+                            // gesture was: a move, a second finger, a lift, or a finger held still.
+                            val settled = withTimeoutOrNull(PEEK_DELAY_MS) {
+                                var outcome = Settled.Lifted
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val pressed = event.changes.filter { it.pressed }
+                                    if (pressed.isEmpty()) break
+                                    if (pressed.size >= 2) {
+                                        outcome = Settled.Pinched
+                                        break
+                                    }
+                                    val moved = (pressed.first().position - first.position).getDistance()
+                                    if (moved >= touchSlop) {
+                                        outcome = Settled.Moved
+                                        break
+                                    }
+                                }
+                                outcome
+                            }
+
+                            if (settled == null) {
+                                // Held still: the photo as it was, until the finger lifts. Nothing this
+                                // gesture might have drawn was ever started, so there is nothing to undo.
+                                peeking = true
+                                do {
+                                    val event = awaitPointerEvent()
+                                } while (event.changes.any { it.pressed })
+                                peeking = false
+                                touch = null
+                                return@awaitEachGesture
+                            }
+
+                            if (settled == Settled.Lifted) {
+                                // A tap. The tools that act on one act now, on release rather than on
+                                // press, so a hold could have meant something else.
+                                if (canSelect && grabbed < 0) {
+                                    val point = first.position.normalizedIn(latestBounds)
+                                    if (point.x in 0f..1f && point.y in 0f..1f) {
+                                        when {
+                                            healing -> onHeal(point.x, point.y)
+                                            tool == SelectionTool.Wand -> onWand(point.x, point.y)
+                                            tool == SelectionTool.Brush -> {
+                                                onPaint(point.x, point.y)
+                                                onStrokeEnd()
+                                            }
+                                            else -> Unit
+                                        }
+                                    }
+                                }
+                                touch = null
+                                return@awaitEachGesture
+                            }
+
+                            if (settled == Settled.Moved) begin()
+
                             while (true) {
                                 val event = awaitPointerEvent()
                                 val pressed = event.changes.filter { it.pressed }
                                 if (pressed.isEmpty()) break
+
                                 if (pressed.size >= 2) {
-                                    outcome = Settled.Pinched
-                                    break
-                                }
-                                val moved = (pressed.first().position - first.position).getDistance()
-                                if (moved >= touchSlop) {
-                                    outcome = Settled.Moved
-                                    break
-                                }
-                            }
-                            outcome
-                        }
-
-                        if (settled == null) {
-                            // Held still: the photo as it was, until the finger lifts. Nothing this
-                            // gesture might have drawn was ever started, so there is nothing to undo.
-                            peeking = true
-                            do {
-                                val event = awaitPointerEvent()
-                            } while (event.changes.any { it.pressed })
-                            peeking = false
-                            touch = null
-                            return@awaitEachGesture
-                        }
-
-                        if (settled == Settled.Lifted) {
-                            // A tap. The tools that act on one act now, on release rather than on
-                            // press, so a hold could have meant something else.
-                            if (canSelect && grabbed < 0) {
-                                val point = first.position.normalizedIn(latestBounds)
-                                if (point.x in 0f..1f && point.y in 0f..1f) {
+                                    if (!transforming) {
+                                        // A second finger makes this a pinch. Abandon what one finger
+                                        // began rather than leaving half a stroke behind — but a brush
+                                        // or a moved point has already changed the mask, so those close
+                                        // their undo step instead of vanishing.
+                                        if (painting || sweeping || grabbed >= 0) onStrokeEnd()
+                                        trace = emptyList()
+                                        touch = null
+                                        painting = false
+                                        tracing = false
+                                        sweeping = false
+                                        grabbed = -1
+                                        transforming = true
+                                        lastCentroid = pressed.centroid()
+                                        lastSpan = pressed.spread()
+                                    }
+                                    val centroid = pressed.centroid()
+                                    val spread = pressed.spread()
+                                    if (lastSpan > 0f && spread > 0f) {
+                                        val next = (scale * (spread / lastSpan)).coerceIn(1f, MAX_ZOOM)
+                                        // Hold the picture still under the fingers as it grows.
+                                        offset = centroid - centre - (centroid - centre - offset) * (next / scale)
+                                        scale = next
+                                    }
+                                    offset = clampPan(offset + (centroid - lastCentroid), fitted, scale, stageSize)
+                                    lastCentroid = centroid
+                                    lastSpan = spread
+                                    pressed.forEach { it.consume() }
+                                } else if (!transforming && (painting || tracing || sweeping || grabbed >= 0)) {
+                                    val change = pressed.first()
+                                    val position = change.position
+                                    touch = position
                                     when {
-                                        healing -> onHeal(point.x, point.y)
-                                        tool == SelectionTool.Wand -> onWand(point.x, point.y)
-                                        tool == SelectionTool.Brush -> {
-                                            onPaint(point.x, point.y)
-                                            onStrokeEnd()
+                                        grabbed >= 0 -> onMovePoint(grabbed, position.normalizedIn(latestBounds))
+                                        tracing -> {
+                                            val last = trace.lastOrNull()
+                                            if (last == null || (position - last).getDistance() >= minStep) {
+                                                trace = trace + position
+                                            }
                                         }
-                                        else -> Unit
+                                        sweeping -> onGradient(gradientStart, position.normalizedIn(latestBounds))
+                                        else -> paintAt(position, latestBounds, onPaint)
                                     }
+                                    change.consume()
                                 }
                             }
+
                             touch = null
-                            return@awaitEachGesture
-                        }
-
-                        if (settled == Settled.Moved) begin()
-
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.isEmpty()) break
-
-                            if (pressed.size >= 2) {
-                                if (!transforming) {
-                                    // A second finger makes this a pinch. Abandon what one finger
-                                    // began rather than leaving half a stroke behind — but a brush
-                                    // or a moved point has already changed the mask, so those close
-                                    // their undo step instead of vanishing.
-                                    if (painting || sweeping || grabbed >= 0) onStrokeEnd()
+                            when {
+                                transforming -> Unit
+                                grabbed >= 0 || painting || sweeping -> onStrokeEnd()
+                                tracing -> {
+                                    val drawn = trace
                                     trace = emptyList()
-                                    touch = null
-                                    painting = false
-                                    tracing = false
-                                    sweeping = false
-                                    grabbed = -1
-                                    transforming = true
-                                    lastCentroid = pressed.centroid()
-                                    lastSpan = pressed.spread()
+                                    onLasso(drawn.map { it.normalizedIn(latestBounds) })
                                 }
-                                val centroid = pressed.centroid()
-                                val spread = pressed.spread()
-                                if (lastSpan > 0f && spread > 0f) {
-                                    val next = (scale * (spread / lastSpan)).coerceIn(1f, MAX_ZOOM)
-                                    // Hold the picture still under the fingers as it grows.
-                                    offset = centroid - centre - (centroid - centre - offset) * (next / scale)
-                                    scale = next
-                                }
-                                offset = clampPan(offset + (centroid - lastCentroid), fitted, scale, stageSize)
-                                lastCentroid = centroid
-                                lastSpan = spread
-                                pressed.forEach { it.consume() }
-                            } else if (!transforming && (painting || tracing || sweeping || grabbed >= 0)) {
-                                val change = pressed.first()
-                                val position = change.position
-                                touch = position
-                                when {
-                                    grabbed >= 0 -> onMovePoint(grabbed, position.normalizedIn(latestBounds))
-                                    tracing -> {
-                                        val last = trace.lastOrNull()
-                                        if (last == null || (position - last).getDistance() >= minStep) {
-                                            trace = trace + position
-                                        }
-                                    }
-                                    sweeping -> onGradient(gradientStart, position.normalizedIn(latestBounds))
-                                    else -> paintAt(position, latestBounds, onPaint)
-                                }
-                                change.consume()
                             }
                         }
-
+                    } finally {
+                        trace = emptyList()
                         touch = null
-                        when {
-                            transforming -> Unit
-                            grabbed >= 0 || painting || sweeping -> onStrokeEnd()
-                            tracing -> {
-                                val drawn = trace
-                                trace = emptyList()
-                                onLasso(drawn.map { it.normalizedIn(latestBounds) })
-                            }
-                        }
+                        peeking = false
                     }
                 },
         )

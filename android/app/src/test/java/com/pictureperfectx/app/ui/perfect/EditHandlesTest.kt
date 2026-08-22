@@ -106,18 +106,29 @@ class EditHandlesTest {
     }
 
     @Test
-    fun `a layer's area is only draggable while its mask is the one being aimed at`() {
-        // Selecting a layer to adjust its sliders must not put its area under your finger — that is
-        // how drawing used to destroy an area you had already made.
+    fun `a selected layer's area is draggable, because it is the area on screen`() {
+        // Reshaping by handle is not drawing. Drawing a fresh shape still can't touch a selected
+        // layer's area — that needs the mask thumbnail tapped — but the points of the area you are
+        // currently looking at should move when you pull them.
         val area = lassoed()
         val spec = GradientSpec(start = MaskPoint(0.4f, 0.3f), end = MaskPoint(0.6f, 0.7f))
         val layer = Layer.Gradient(id = 1, spec = spec, mask = area)
 
-        assertEquals(
-            "only the ramp, until the mask is aimed at",
-            listOf(spec.start, spec.end),
-            editHandles(editing(layer = layer)),
+        assertEquals(area.path!! + listOf(spec.start, spec.end), editHandles(editing(layer = layer)))
+    }
+
+    @Test
+    fun `a drawn shape takes the handles off whatever the layer was wearing`() {
+        // The reported bug, in the screenshot: handles sitting on one shape while a completely
+        // different one was being drawn, with no way to tell which the controls belonged to.
+        val drawn = MaskLasso.trace(
+            Mask.blank(32, 32),
+            listOf(MaskPoint(0.6f, 0.6f), MaskPoint(0.9f, 0.7f), MaskPoint(0.7f, 0.9f)),
         )
+        val layer = Layer.Tone(id = 1, mask = lassoed())
+        val handles = editHandles(editing(mask = drawn, layer = layer))
+
+        assertEquals("the handles follow the shape under the finger", drawn.path, handles)
     }
 
     @Test
