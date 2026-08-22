@@ -10,18 +10,27 @@ import kotlin.math.max
 import kotlin.math.sin
 
 /**
- * Applies an [ImageGeometry] to a bitmap, in the order the model declares: flips, then quarter
- * turns, then straighten, then crop.
+ * Applies an [ImageGeometry] to a bitmap: flips, then quarter turns, then straighten, then crop.
  *
- * The same function serves the live preview and the full-resolution export — the crop lives in
- * normalized coordinates, so running it at two different sizes yields the same framing, which is
- * what keeps "what you saw" and "what got saved" in agreement.
+ * The crop lives in normalized coordinates, so running it at preview size and at full resolution
+ * yields the same framing — which is what keeps "what you saw" and "what got saved" in agreement.
+ *
+ * Deliberately offered as **two calls rather than one**. Anything drawn in normalized coordinates —
+ * a mask, a text placement, a gradient — means "this fraction of the frame", so it has to be
+ * composited while the frame is still the whole photo and cropped afterwards. A single convenient
+ * `apply` that did both at once is what let the export crop first and land every layer somewhere the
+ * preview never showed it; there is now no such call to reach for by mistake.
  */
 object ImageTransformer {
 
-    fun apply(source: Bitmap, geometry: ImageGeometry): Bitmap {
-        val oriented = orient(source, geometry)
+    /**
+     * The crop alone, on an already-oriented bitmap. Call this **after** compositing, never before.
+     */
+    fun crop(oriented: Bitmap, geometry: ImageGeometry): Bitmap {
         val rect = CropMath.pixelRect(geometry.crop, oriented.width, oriented.height)
+        if (rect.x == 0 && rect.y == 0 && rect.width == oriented.width && rect.height == oriented.height) {
+            return oriented
+        }
         return Bitmap.createBitmap(oriented, rect.x, rect.y, rect.width, rect.height)
     }
 

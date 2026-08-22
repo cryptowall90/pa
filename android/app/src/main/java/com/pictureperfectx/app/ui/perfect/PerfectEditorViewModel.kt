@@ -543,11 +543,18 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             val document = _state.value.document
             val ok = withContext(Dispatchers.IO) {
                 runCatching {
-                    // Geometry, then the stack — the same order the preview composites in, which is
-                    // what keeps the saved photo matching what was on screen.
-                    val cropped = ImageTransformer.apply(source, geometry)
-                    val out = LayerRenderer.render(getApplication(), cropped, document)
-                    if (out !== cropped && cropped !== source && !cropped.isRecycled) cropped.recycle()
+                    // Orient, composite, *then* crop — the same order the preview uses, and the only
+                    // order that can be right. A layer's mask means "this fraction of the frame", so
+                    // cropping before compositing changes what the frame is and lands every mask,
+                    // text placement and gradient somewhere the preview never showed. This used to
+                    // crop first, and the saved photo silently disagreed with the screen.
+                    val oriented = ImageTransformer.orient(source, geometry)
+                    val rendered = LayerRenderer.render(getApplication(), oriented, document)
+                    if (rendered !== oriented && oriented !== source && !oriented.isRecycled) {
+                        oriented.recycle()
+                    }
+                    val out = ImageTransformer.crop(rendered, geometry)
+                    if (out !== rendered && !rendered.isRecycled) rendered.recycle()
                     val saved = PhotoSaver.save(getApplication(), out)
                     // The stack goes beside the photo, so this edit can be reopened and revised
                     // rather than being the last thing that will ever happen to it.
