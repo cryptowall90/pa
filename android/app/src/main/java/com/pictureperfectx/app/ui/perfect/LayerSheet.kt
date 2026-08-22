@@ -62,6 +62,7 @@ fun LayerSheet(
     state: PerfectEditUiState,
     onDismiss: () -> Unit,
     onSelect: (Long) -> Unit,
+    onEditMask: (Long) -> Unit,
     onToggleVisible: (Long) -> Unit,
     onMove: (Long, Boolean) -> Unit,
     onDuplicate: (Long) -> Unit,
@@ -83,7 +84,7 @@ fun LayerSheet(
                 modifier = Modifier.padding(start = 20.dp, bottom = 4.dp),
             )
             Text(
-                text = "Topmost first. Tap one to edit it.",
+                text = "Topmost first. Tap a layer to adjust it, or its area to redraw that.",
                 color = Color(0x99FFFFFF),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(start = 20.dp, bottom = 10.dp),
@@ -104,7 +105,9 @@ fun LayerSheet(
                     LayerCard(
                         layer = layer,
                         isSelected = layer.id == state.document.selectedId,
+                        isMaskTargeted = layer.id == state.maskTarget,
                         onSelect = { onSelect(layer.id) },
+                        onEditMask = { onEditMask(layer.id) },
                         onToggleVisible = { onToggleVisible(layer.id) },
                         onMove = { up -> onMove(layer.id, up) },
                         onDuplicate = { onDuplicate(layer.id) },
@@ -121,7 +124,9 @@ fun LayerSheet(
 private fun LayerCard(
     layer: Layer,
     isSelected: Boolean,
+    isMaskTargeted: Boolean,
     onSelect: () -> Unit,
+    onEditMask: () -> Unit,
     onToggleVisible: () -> Unit,
     onMove: (Boolean) -> Unit,
     onDuplicate: () -> Unit,
@@ -142,7 +147,12 @@ private fun LayerCard(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            MaskThumbnail(mask = layer.mask, modifier = Modifier.size(34.dp))
+            MaskThumbnail(
+                mask = layer.mask,
+                isTargeted = isMaskTargeted,
+                onClick = onEditMask,
+                modifier = Modifier.size(34.dp),
+            )
             Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
                 Text(
                     text = layer.name,
@@ -218,11 +228,22 @@ private fun SheetIcon(
  * than the sheet it sits in.
  */
 @Composable
-private fun MaskThumbnail(mask: Mask, modifier: Modifier = Modifier) {
+private fun MaskThumbnail(
+    mask: Mask,
+    isTargeted: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(6.dp))
-            .background(Color(0x22FFFFFF)),
+            .background(Color(0x22FFFFFF))
+            // The switch Photoshop makes you throw before painting on a mask, and it wears the same
+            // lit border while it is the one drawing will change.
+            .then(
+                if (isTargeted) Modifier.border(2.dp, Brand, RoundedCornerShape(6.dp)) else Modifier,
+            )
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (mask.isEmpty) {

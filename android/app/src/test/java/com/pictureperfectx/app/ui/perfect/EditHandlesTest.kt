@@ -29,12 +29,14 @@ class EditHandlesTest {
         mask: Mask? = null,
         layer: Layer? = null,
         tool: SelectionTool = SelectionTool.Lasso,
+        targetMask: Boolean = false,
     ): PerfectEditUiState {
         val document = if (layer == null) Document() else Document().add { layer }
         return PerfectEditUiState(
             panel = EditorPanel.Effects,
             document = document,
-            pendingSelection = mask,
+            selection = mask,
+            maskTarget = layer?.id?.takeIf { targetMask },
             selectionTool = tool,
         )
     }
@@ -96,11 +98,26 @@ class EditHandlesTest {
         val area = lassoed()
         val spec = GradientSpec(start = MaskPoint(0.4f, 0.3f), end = MaskPoint(0.6f, 0.7f))
         val layer = Layer.Gradient(id = 1, spec = spec, mask = area)
-        val handles = editHandles(editing(layer = layer))
+        val handles = editHandles(editing(layer = layer, targetMask = true))
 
         assertEquals(area.path!! + listOf(spec.start, spec.end), handles)
         assertEquals(spec.start, handles[handles.size - 2])
         assertEquals(spec.end, handles.last())
+    }
+
+    @Test
+    fun `a layer's area is only draggable while its mask is the one being aimed at`() {
+        // Selecting a layer to adjust its sliders must not put its area under your finger — that is
+        // how drawing used to destroy an area you had already made.
+        val area = lassoed()
+        val spec = GradientSpec(start = MaskPoint(0.4f, 0.3f), end = MaskPoint(0.6f, 0.7f))
+        val layer = Layer.Gradient(id = 1, spec = spec, mask = area)
+
+        assertEquals(
+            "only the ramp, until the mask is aimed at",
+            listOf(spec.start, spec.end),
+            editHandles(editing(layer = layer)),
+        )
     }
 
     @Test
@@ -114,7 +131,7 @@ class EditHandlesTest {
     fun `a flat fill has no ramp to aim, so it offers only its area`() {
         val area = lassoed()
         val fill = Layer.Gradient(id = 1, solid = true, mask = area)
-        assertEquals(area.path, editHandles(editing(layer = fill)))
+        assertEquals(area.path, editHandles(editing(layer = fill, targetMask = true)))
     }
 
     @Test

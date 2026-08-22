@@ -259,6 +259,9 @@ fun PerfectEditorScreen(
                 onDismiss = { showingLayers = false },
                 // Choosing a layer is what you opened this for, so it closes on the way out.
                 onSelect = { id -> viewModel.onSelectLayer(id); showingLayers = false },
+                // Aiming at a mask is the point of closing the sheet too: you tapped it to go and
+                // draw.
+                onEditMask = { id -> viewModel.onEditLayerMask(id); showingLayers = false },
                 onToggleVisible = viewModel::onToggleLayerVisibility,
                 onMove = viewModel::onMoveLayer,
                 onDuplicate = viewModel::onDuplicateLayer,
@@ -970,16 +973,12 @@ private fun EffectsControls(
     StatusLine(text = describe(layer, state))
 }
 
-/** What is being edited, where it lands, and what touching the photo will do to it. */
+/** What is being edited, where it lands, and what touching the photo will do next. */
 private fun describe(layer: Layer, state: PerfectEditUiState): String {
-    val where = if (layer.mask.isEmpty) "the whole photo" else "its area"
-    val next = when (state.selectionTool) {
-        SelectionTool.Lasso -> "draw to reshape it"
-        SelectionTool.Brush -> "paint to reshape it"
-        SelectionTool.Fade -> "drag to fade it"
-        SelectionTool.Wand -> "tap a colour to reshape it"
-    }
-    return "${layer.name} · applies to $where · $next"
+    val where = if (layer.mask.isEmpty) "the whole photo" else "its own area"
+    // Drawing no longer touches this layer unless its mask is the target, so the line has to say
+    // which of the two is about to change — that ambiguity is what used to destroy people's areas.
+    return "${layer.name} · applies to $where — ${describeDrawing(state).replaceFirstChar { it.lowercase() }}"
 }
 
 /**
@@ -1016,21 +1015,42 @@ private fun ToolInspector(state: PerfectEditUiState, viewModel: PerfectEditorVie
     }
 
     // An area can be softened before its effect is chosen, the same as after.
-    if (state.pendingSelection != null) FeatherSlider(state = state, viewModel = viewModel)
+    if (state.activeMask != null) FeatherSlider(state = state, viewModel = viewModel)
 
-    StatusLine(
-        text = if (state.pendingSelection == null) {
-            when (state.selectionTool) {
-                SelectionTool.Lasso -> "Draw around an area, then add an effect to apply it only there."
-                SelectionTool.Brush -> "Paint over an area, then add an effect to apply it only there."
-                SelectionTool.Fade -> "Drag across the photo, then add an effect to fade it in along the run."
-                SelectionTool.Wand -> "Tap a colour to choose everything like it, then add an effect."
-            }
-        } else {
-            "Area ready — add an effect and it applies only there."
-        },
-    )
+    StatusLine(text = describeDrawing(state))
 }
+
+/**
+ * What a tap or a drag will do right now, in words.
+ *
+ * The mode is the part nobody could work out from the screen: three chips labelled New, Add and
+ * Subtract, with nothing anywhere saying what they combine. They combine what you are drawing *now*
+ * with the area you already have — so that is what this says, every time, in the same shape.
+ */
+private fun describeDrawing(state: PerfectEditUiState): String {
+    val doing = when (state.selectionTool) {
+        SelectionTool.Lasso -> "draw around an area"
+        SelectionTool.Brush -> "paint over an area"
+        SelectionTool.Fade -> "drag across the photo"
+        SelectionTool.Wand -> "tap a colour"
+    }
+    // Aiming at a layer's mask is the exception and has to say so loudest.
+    state.targetedLayer?.let { layer ->
+        return "Editing ${layer.name}'s area — $doing to ${state.selectionMode.verb}."
+    }
+    if (state.activeMask == null) {
+        return "${doing.replaceFirstChar { it.uppercase() }}, then add an effect to apply it only there."
+    }
+    return "Area ready — add an effect, or $doing to ${state.selectionMode.verb}."
+}
+
+/** What this mode does to the area you already have. */
+private val SelectionMode.verb: String
+    get() = when (this) {
+        SelectionMode.Replace -> "replace it"
+        SelectionMode.Add -> "grow it"
+        SelectionMode.Subtract -> "cut it away"
+    }
 
 /**
  * The one control the selected chip asks for.
