@@ -1119,7 +1119,7 @@ private fun describeDrawing(state: PerfectEditUiState): String {
         SelectionTool.Lasso -> "draw around an area"
         SelectionTool.Brush -> "paint over an area"
         SelectionTool.Fade -> "drag across the photo"
-        SelectionTool.Wand -> "tap a colour"
+        SelectionTool.Wand -> "tap a color"
     }
     // Aiming at a layer's mask is the exception and has to say so loudest.
     state.targetedLayer?.let { layer ->
@@ -1216,8 +1216,9 @@ private fun LayerInspector(
 
         else -> {
             ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
-            // A hue slider on its own can't reach black, white or transparent, so the shortcuts
-            // ride with it rather than as a row of their own.
+            // The wheel reaches black and white in principle, but not transparent — and nobody
+            // should have to aim for an exact corner of a picker for the two colours captions are
+            // usually set in. The shortcuts ride with it rather than as a row of their own.
             ColourTones(layer = layer, control = control, viewModel = viewModel)
             // The shape of the ramp belongs with the slider that shapes it.
             if (layer is Layer.Gradient && control == LayerControl.Falloff && !layer.solid) {
@@ -1234,7 +1235,7 @@ private fun LayerInspector(
     }
 }
 
-/** The tone shortcuts beside a colour slider: black, white, and — for a ramp — clear. */
+/** The shortcuts beside the wheel: black, white, and — for a ramp — clear. */
 @Composable
 private fun ColourTones(layer: Layer, control: LayerControl, viewModel: PerfectEditorViewModel) {
     when {
@@ -1314,7 +1315,7 @@ private fun StatusLine(text: String) {
     )
 }
 
-/** The single slider, showing whichever property the chips selected. */
+/** The single control, showing whichever property the chips selected: a slider, or the wheel. */
 @Composable
 private fun ControlSlider(
     layer: Layer,
@@ -1346,13 +1347,10 @@ private fun ControlSlider(
         (control == LayerControl.ColourFrom || control == LayerControl.ColourTo) &&
             layer is Layer.Gradient -> {
             val atStart = control == LayerControl.ColourFrom
-            val colour = if (atStart) layer.from else layer.to
-            ValueSlider(
-                value = colour.hue,
-                range = 0f..360f,
-                readout = if (colour.tone == ColourTone.Hue) "${colour.hue.roundToInt()}°" else colour.tone.label,
-                onChange = { viewModel.onGradientHue(layer.id, atStart, it) },
-                onChangeFinished = viewModel::commitLayerEdit,
+            ColourWheel(
+                colour = if (atStart) layer.from else layer.to,
+                onPick = { viewModel.onGradientColour(layer.id, atStart, it) },
+                onPicked = viewModel::commitLayerEdit,
             )
         }
 
@@ -1372,16 +1370,10 @@ private fun ControlSlider(
             onChangeFinished = viewModel::commitLayerEdit,
         )
 
-        control == LayerControl.TextColour && layer is Layer.Text -> ValueSlider(
-            value = layer.colour.hue,
-            range = 0f..360f,
-            readout = if (layer.colour.tone == ColourTone.Hue) {
-                "${layer.colour.hue.roundToInt()}°"
-            } else {
-                layer.colour.tone.label
-            },
-            onChange = { viewModel.onTextHue(layer.id, it) },
-            onChangeFinished = viewModel::commitLayerEdit,
+        control == LayerControl.TextColour && layer is Layer.Text -> ColourWheel(
+            colour = layer.colour,
+            onPick = { viewModel.onTextColour(layer.id, it) },
+            onPicked = viewModel::commitLayerEdit,
         )
 
         control == LayerControl.SmoothAmount && layer is Layer.Smooth -> ValueSlider(
@@ -1415,16 +1407,10 @@ private fun ControlSlider(
             onChangeFinished = viewModel::commitLayerEdit,
         )
 
-        control == LayerControl.TextColour && layer is Layer.Shape -> ValueSlider(
-            value = layer.colour.hue,
-            range = 0f..360f,
-            readout = if (layer.colour.tone == ColourTone.Hue) {
-                "${layer.colour.hue.roundToInt()}°"
-            } else {
-                layer.colour.tone.label
-            },
-            onChange = { viewModel.onShapeHue(layer.id, it) },
-            onChangeFinished = viewModel::commitLayerEdit,
+        control == LayerControl.TextColour && layer is Layer.Shape -> ColourWheel(
+            colour = layer.colour,
+            onPick = { viewModel.onShapeColour(layer.id, it) },
+            onPicked = viewModel::commitLayerEdit,
         )
 
         control == LayerControl.Intensity && layer is Layer.Look -> ValueSlider(

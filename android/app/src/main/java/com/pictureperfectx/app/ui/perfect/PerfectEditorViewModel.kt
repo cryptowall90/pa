@@ -27,6 +27,7 @@ import com.pictureperfectx.app.layers.CurveSpec
 import com.pictureperfectx.app.layers.Curves
 import com.pictureperfectx.app.layers.Document
 import com.pictureperfectx.app.layers.EditDocument
+import com.pictureperfectx.app.layers.GradientColour
 import com.pictureperfectx.app.layers.GradientSpec
 import com.pictureperfectx.app.layers.GradientStyle
 import com.pictureperfectx.app.layers.Heal
@@ -44,6 +45,7 @@ import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
 import com.pictureperfectx.app.layers.combinedWith
+import com.pictureperfectx.app.layers.sane
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +75,7 @@ enum class EditorPanel(val label: String) {
 /** An effect the user can add, as offered by the effects picker. */
 enum class EffectKind(val label: String, val description: String) {
     Tone("Tone", "Blacks, shadows, highlights and whites."),
-    Look("Look", "One of a hundred film and colour looks."),
+    Look("Look", "One of a hundred film and color looks."),
     Curve("Curve", "Tone curves, per channel, for contrast and grading."),
     Text("Text", "Words on the photo."),
     Shape("Shape", "A rectangle, ellipse or line."),
@@ -81,8 +83,8 @@ enum class EffectKind(val label: String, val description: String) {
     Heal("Heal", "Tap a blemish to cover it with skin from nearby."),
     Whiten("Whiten", "Brush over teeth or eyes to lift them."),
     Brighten("Brighten", "Brush under the eyes to lift the shadows."),
-    Gradient("Gradient", "A wash of colour across the photo."),
-    Fill("Fill", "A flat colour inside your selection."),
+    Gradient("Gradient", "A wash of color across the photo."),
+    Fill("Fill", "A flat color inside your selection."),
 }
 
 /**
@@ -124,7 +126,7 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
     ColourTo("To"),
     TextSize("Size"),
     TextRotation("Rotate"),
-    TextColour("Colour"),
+    TextColour("Color"),
     ShapeStroke("Outline"),
     SmoothAmount("Amount"),
     HealSize("Spot size"),
@@ -936,8 +938,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onTextRotation(id: Long, degrees: Float) =
         updateText(id, record = false) { it.copy(rotation = degrees.coerceIn(-180f, 180f)) }
 
-    fun onTextHue(id: Long, hue: Float) =
-        updateText(id, record = false) { it.copy(colour = it.colour.copy(hue = hue.coerceIn(0f, 360f))) }
+    /**
+     * A colour taken off the wheel: hue, saturation and brightness together.
+     *
+     * One call rather than three, because a wheel moves two of them at once — and unrecorded,
+     * because the gesture ending is the undo step, the same as any slider drag.
+     */
+    fun onTextColour(id: Long, colour: GradientColour) =
+        updateText(id, record = false) { it.copy(colour = colour.sane()) }
 
     fun onTextTone(id: Long, tone: ColourTone) =
         updateText(id, record = true) { it.copy(colour = it.colour.copy(tone = tone)) }
@@ -1027,8 +1035,8 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onShapeRotation(id: Long, degrees: Float) =
         updateShape(id, record = false) { it.copy(rotation = degrees.coerceIn(-180f, 180f)) }
 
-    fun onShapeHue(id: Long, hue: Float) =
-        updateShape(id, record = false) { it.copy(colour = it.colour.copy(hue = hue.coerceIn(0f, 360f))) }
+    fun onShapeColour(id: Long, colour: GradientColour) =
+        updateShape(id, record = false) { it.copy(colour = colour.sane()) }
 
     fun onShapeTone(id: Long, tone: ColourTone) =
         updateShape(id, record = true) { it.copy(colour = it.colour.copy(tone = tone)) }
@@ -1141,23 +1149,19 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * Without that, the first thing anyone does to a fill breaks it: the colour slider edits one
      * end, and a flat orange silently becomes an orange-to-something ramp.
      */
-    fun onGradientHue(id: Long, atStart: Boolean, hue: Float) = updateGradientLayer(id) { layer ->
-        val colour = (if (atStart) layer.from else layer.to).copy(hue = hue.coerceIn(0f, 360f))
-        when {
-            layer.solid -> layer.copy(from = colour, to = colour)
-            atStart -> layer.copy(from = colour)
-            else -> layer.copy(to = colour)
-        }
-    }
+    fun onGradientColour(id: Long, atStart: Boolean, colour: GradientColour) =
+        updateGradientLayer(id) { layer -> layer.withColour(atStart, colour.sane()) }
 
     /** Black, white, clear or a colour, at one end of a gradient layer's wash. */
     fun onGradientTone(id: Long, atStart: Boolean, tone: ColourTone) = updateGradientLayer(id) { layer ->
-        val colour = (if (atStart) layer.from else layer.to).copy(tone = tone)
-        when {
-            layer.solid -> layer.copy(from = colour, to = colour)
-            atStart -> layer.copy(from = colour)
-            else -> layer.copy(to = colour)
-        }
+        layer.withColour(atStart, (if (atStart) layer.from else layer.to).copy(tone = tone))
+    }
+
+    /** A fill is one colour wearing two ends, so setting either has to set both or it comes apart. */
+    private fun Layer.Gradient.withColour(atStart: Boolean, colour: GradientColour) = when {
+        solid -> copy(from = colour, to = colour)
+        atStart -> copy(from = colour)
+        else -> copy(to = colour)
     }
 
     /** Off is how a fill becomes a gradient: the far end is freed and gets its own control back. */

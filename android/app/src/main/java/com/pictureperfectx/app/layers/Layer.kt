@@ -322,7 +322,8 @@ sealed interface Layer {
         /** Type size as a fraction of the image's shorter edge, so it survives the export. */
         val size: Float = 0.09f,
         val rotation: Float = 0f,
-        val colour: GradientColour = GradientColour(tone = ColourTone.White),
+        /** Black by default: it is what a caption is, and what most photographs are lighter than. */
+        val colour: GradientColour = GradientColour(tone = ColourTone.Black),
         val font: TextFont = TextFont.Sans,
     ) : Layer
 
@@ -444,28 +445,36 @@ sealed interface Layer {
 }
 
 /**
- * One end of a colour gradient.
+ * A colour: where it sits on the wheel, how far out from the middle, and how bright.
  *
- * A hue with a lightness shortcut rather than an arbitrary colour: it needs no picker widget, which
- * nothing else in the app has, and drives the same one-slider-and-chips pattern as every other
- * control. [alpha] of 0 is what makes a gradient fade into the photo rather than over it.
+ * It was a hue and nothing else, which meant every colour the app could make was fully saturated and
+ * fully bright — a rainbow, not a palette, with no pink, no navy and no charcoal anywhere in it.
+ * [saturation] and [value] are the two axes that were missing, and both default to 1 so a colour
+ * saved before they existed still reads back as exactly the colour it was.
  */
 @Serializable
 data class GradientColour(
     /** 0..360 around the wheel. Ignored unless [tone] is [ColourTone.Hue]. */
     val hue: Float = 20f,
     val tone: ColourTone = ColourTone.Hue,
+    /** How far out from the middle of the wheel: 0 is white, 1 the pure hue. */
+    val saturation: Float = 1f,
+    /** How bright: 0 is black, 1 as bright as this hue goes. */
+    val value: Float = 1f,
 )
 
 /**
- * The shortcuts worth having without a colour picker.
+ * The shortcuts sitting beside the wheel.
  *
- * Black and white are most of what a gradient wash is actually used for, and [Clear] is what lets a
- * gradient fade *into* the photo rather than sitting over all of it.
+ * Black and white are reachable on the wheel now — the middle at full brightness, and the bottom of
+ * the brightness slider — but they are what most washes and most captions actually want, and hunting
+ * for a corner of a picker to get an exact one is worse than a chip that says the word. [Clear] is
+ * what lets a gradient fade *into* the photo rather than sitting over all of it, and has no place on
+ * a wheel at all.
  */
 @Serializable
 enum class ColourTone(val label: String) {
-    Hue("Colour"),
+    Hue("Color"),
     Black("Black"),
     White("White"),
     Clear("Clear"),
@@ -513,31 +522,15 @@ enum class TextFont(val label: String) {
 }
 
 /**
- * The colour this end of a gradient contributes, as packed ARGB.
+ * The colour this contributes, as packed ARGB.
  *
- * A saturated hue at mid lightness reads as a wash rather than a stain, which is what a gradient
- * over a photo is for; black and white skip the wheel entirely.
+ * Black and white skip the wheel entirely rather than being hunted for on it, which is why they are
+ * chips; everything else is [hsvToRgb] straight from where the thumb was left.
  */
 fun GradientColour.toArgb(): Int = when (tone) {
     // Clear keeps the colour it fades from, so the ramp loses opacity without drifting through grey.
-    ColourTone.Clear -> hueToRgb(hue)
+    ColourTone.Clear -> hsvToRgb(hue, saturation, value)
     ColourTone.Black -> 0xFF000000.toInt()
     ColourTone.White -> 0xFFFFFFFF.toInt()
-    ColourTone.Hue -> 0xFF000000.toInt() or hueToRgb(hue)
-}
-
-/** A fully saturated colour at the given angle round the wheel, 0..360. */
-private fun hueToRgb(hue: Float): Int {
-    val h = ((hue % 360f) + 360f) % 360f / 60f
-    val x = 1f - kotlin.math.abs(h % 2f - 1f)
-    val (r, g, b) = when (h.toInt()) {
-        0 -> Triple(1f, x, 0f)
-        1 -> Triple(x, 1f, 0f)
-        2 -> Triple(0f, 1f, x)
-        3 -> Triple(0f, x, 1f)
-        4 -> Triple(x, 0f, 1f)
-        else -> Triple(1f, 0f, x)
-    }
-    fun channel(value: Float) = (value * 255).roundToInt().coerceIn(0, 255)
-    return (channel(r) shl 16) or (channel(g) shl 8) or channel(b)
+    ColourTone.Hue -> 0xFF000000.toInt() or hsvToRgb(hue, saturation, value)
 }
