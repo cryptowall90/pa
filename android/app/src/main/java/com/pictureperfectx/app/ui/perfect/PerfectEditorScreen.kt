@@ -460,7 +460,7 @@ private fun EditorStage(
     // Held still on the photo: show what was there before any of this. Nothing is rendered for it —
     // the un-composited preview is already kept, so the peek is a swap rather than a re-render.
     var peeking by remember { mutableStateOf(false) }
-    val canvas = if (peeking) state.original ?: state.canvas else state.canvas
+    val canvas = state.canvas
 
     // Zoom is for precision inside an area. The crop frame is about the whole picture, so cropping
     // always happens at fit.
@@ -481,6 +481,10 @@ private fun EditorStage(
         }
 
         val image = remember(canvas) { canvas.asImageBitmap() }
+        // Only what is *drawn* swaps during a peek. Everything else — the stage geometry, the touch
+        // mapping, the keys on the gesture block — keeps reading the real canvas, so holding a
+        // finger down cannot restart the very gesture loop that is watching it.
+        val shown = if (peeking) state.original?.asImageBitmap() ?: image else image
         val insetPx = with(LocalDensity.current) { STAGE_INSET.dp.toPx() }
         val fitted = remember(stageSize, canvas.width, canvas.height, insetPx) {
             fittedBounds(
@@ -497,8 +501,8 @@ private fun EditorStage(
         val bounds = fitted.scaledAbout(centre, scale).translated(offset)
 
         Image(
-            bitmap = image,
-            contentDescription = "Preview",
+            bitmap = shown,
+            contentDescription = if (peeking) "The photo before this edit" else "Preview",
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .fillMaxSize()
