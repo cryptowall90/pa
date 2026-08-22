@@ -327,6 +327,10 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     private var openedPhoto: PhotoEntity? = null
     private var openedUri: Uri? = null
 
+    // Which photo an unfinished edit belongs to: the image actually on screen, so a draft is found
+    // again whether the editor was opened on the original or on something saved from it.
+    private var draftKey: String? = null
+
     /**
      * The look catalog, shared with the chooser so both name the same thing.
      *
@@ -361,6 +365,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             }
             val openUri = if (stack != null) Uri.parse(photo!!.sourceUri) else uri
 
+            // A draft is by definition more recent than any saved stack, so it wins. It is keyed by
+            // the photo the work was actually done *on*, which is the original when reopening an
+            // edit — otherwise revising a saved photo would look for its draft under the wrong name.
+            draftKey = openUri.toString()
+            val draft = withContext(Dispatchers.IO) {
+                EditStore.readDraft(getApplication(), draftKey!!)
+            }
+
             var loaded = withContext(Dispatchers.IO) {
                 BitmapIO.loadForEdit(getApplication(), openUri, FULL_MAX_EDGE)
             }
@@ -372,7 +384,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                     BitmapIO.loadForEdit(getApplication(), uri, FULL_MAX_EDGE)
                 }
             }
-            val restored = stack.takeUnless { lostOriginal }
+            val restored = (draft ?: stack).takeUnless { lostOriginal }
 
             val full = loaded?.bitmap
             val preview = full?.let { scaleToMaxEdge(it, PREVIEW_MAX_EDGE) }
@@ -396,7 +408,8 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                             "The photo this was edited from is gone, so you're editing the saved " +
                                 "version and its layers couldn't be reopened."
                         restored != null -> restored.document.layers.size.let { count ->
-                            "Reopened with $count ${if (count == 1) "layer" else "layers"}."
+                            val what = if (draft != null) "Draft reopened" else "Reopened"
+                            "$what with $count ${if (count == 1) "layer" else "layers"}."
                         }
                         loaded.degraded ->
                             "This device can't decode the raw file, so you're editing its embedded " +
@@ -569,6 +582,26 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- Save -----------------------------------------------------------------------------------
 
+    /**
+     * Keeps the edit as it stands without exporting anything.
+     *
+     * Saving writes a photo to the gallery, which is a commitment. This is the other thing people
+     * want: to stop for now. Nothing new appears anywhere — reopening this photo simply picks the
+     * work back up.
+     */
+    fun saveDraft() {
+        val key = draftKey ?: openedUri?.toString() ?: return
+        val edit = EditDocument(geometry = _state.value.geometry, document = _state.value.document)
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                EditStore.writeDraft(getApplication(), key, edit)
+            }
+            _state.update {
+                it.copy(savedMessage = if (ok) "Draft saved" else "Couldn't save the draft")
+            }
+        }
+    }
+
     fun save(onSaved: () -> Unit) {
         val source = sourceFull ?: return
         if (_state.value.isSaving) return
@@ -617,6 +650,9 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                         ),
                     )
                     if (out !== source && !out.isRecycled) out.recycle()
+                    // The work has landed somewhere permanent. A draft left behind would resurrect
+                    // this older state the next time the photo was opened.
+                    draftKey?.let { EditStore.deleteDraft(getApplication(), it) }
                 }.isSuccess
             }
             _state.update {

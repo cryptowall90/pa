@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import com.pictureperfectx.app.layers.EditDocument
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * The layer stacks behind saved photos.
@@ -18,7 +19,46 @@ object EditStore {
 
     private const val TAG = "EditStore"
     private const val DIRECTORY = "edits"
+    private const val DRAFTS = "drafts"
     private const val EXTENSION = "ppx"
+
+    /**
+     * A filename for the edit in progress on [sourceUri].
+     *
+     * A URI is full of characters a filename can't hold, and is far too long besides, so it is
+     * digested rather than sanitised. Stable across launches — which is the whole requirement, since
+     * this is how an unfinished edit is found again tomorrow.
+     */
+    fun keyFor(sourceUri: String): String =
+        MessageDigest.getInstance("SHA-1")
+            .digest(sourceUri.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+    /** Saves the edit in progress on [sourceUri], replacing any earlier one. */
+    fun writeDraft(context: Context, sourceUri: String, edit: EditDocument): Boolean = runCatching {
+        val directory = File(context.filesDir, DRAFTS).apply { mkdirs() }
+        File(directory, "${keyFor(sourceUri)}.$EXTENSION").writeText(EditDocument.encode(edit))
+        true
+    }.onFailure { Log.e(TAG, "Could not write a draft for $sourceUri", it) }.getOrDefault(false)
+
+    /** The unfinished edit on [sourceUri], if there is one. */
+    fun readDraft(context: Context, sourceUri: String): EditDocument? = runCatching {
+        val file = File(File(context.filesDir, DRAFTS), "${keyFor(sourceUri)}.$EXTENSION")
+        if (file.exists()) EditDocument.decode(file.readText()) else null
+    }.onFailure { Log.e(TAG, "Could not read the draft for $sourceUri", it) }.getOrNull()
+
+    /**
+     * Forgets the draft on [sourceUri].
+     *
+     * Called when a save lands: the work has arrived somewhere permanent, and a draft left behind
+     * would resurrect an older state the next time this photo was opened.
+     */
+    fun deleteDraft(context: Context, sourceUri: String) {
+        runCatching {
+            val file = File(File(context.filesDir, DRAFTS), "${keyFor(sourceUri)}.$EXTENSION")
+            if (file.exists()) file.delete()
+        }.onFailure { Log.e(TAG, "Could not delete the draft for $sourceUri", it) }
+    }
 
     /**
      * Writes [edit] and returns a URI for it, or null if it couldn't be stored.

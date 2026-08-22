@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.RotateLeft
 import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
@@ -254,6 +255,7 @@ fun PerfectEditorScreen(
                     onUndo = viewModel::onUndo,
                     onRedo = viewModel::onRedo,
                     onReset = viewModel::onReset,
+                    onDraft = viewModel::saveDraft,
                     onSave = { viewModel.save(onSaved) },
                     onToggleMenu = viewModel::onToggleMenu,
                 )
@@ -279,7 +281,7 @@ fun PerfectEditorScreen(
     }
 }
 
-/** Cancel, history, the edit circle and save — the whole chrome of the editor, in one row. */
+/** Cancel, history, the edit circle, draft and save — the whole chrome of the editor, in one row. */
 @Composable
 private fun ActionRow(
     state: PerfectEditUiState,
@@ -287,6 +289,7 @@ private fun ActionRow(
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onReset: () -> Unit,
+    onDraft: () -> Unit,
     onSave: () -> Unit,
     onToggleMenu: () -> Unit,
 ) {
@@ -316,6 +319,14 @@ private fun ActionRow(
             description = "Reset",
             enabled = state.ready,
             onClick = onReset,
+        )
+        // Stopping for now, as distinct from finishing. Nothing is exported and nothing new appears
+        // in the gallery — reopening this photo simply picks the work back up.
+        ActionIcon(
+            icon = Icons.Filled.BookmarkBorder,
+            description = "Save as draft",
+            enabled = state.ready,
+            onClick = onDraft,
         )
         if (state.isSaving) {
             CircularProgressIndicator(color = Brand, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
