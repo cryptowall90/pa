@@ -62,13 +62,57 @@ class SelectionRoutingTest {
     }
 
     @Test
-    fun `selecting a layer does not put its area under your finger`() {
-        // The whole point. A selected layer's sliders are live; its *area* is not.
+    fun `drawing never lands on a selected layer's area, but Feather and Invert do`() {
+        // Two different questions, and treating them as one is what broke both halves.
+        //
+        // *Drawing* must not touch a selected layer's area — that is the rule that stops a second
+        // lasso silently overwriting the first layer's, and it needs the mask thumbnail tapped
+        // first. But Feather and Invert are not drawing: with a layer selected and nothing drawn,
+        // its area is the only area on screen, so acting on anything else means appearing to do
+        // nothing at all. That is exactly what they did.
         val layerArea = area()
         val state = withLayer(layerArea)
 
-        assertNull("no floating selection, and the layer's mask is not the target", state.activeMask)
-        assertFalse(state.isEditingMask)
+        assertEquals("Feather and Invert have something to act on", layerArea, state.activeMask)
+        assertNull("but a new shape starts from scratch", state.drawingBase)
+        assertFalse("and it is not the layer's mask being reshaped", state.isEditingMask)
+    }
+
+    @Test
+    fun `a selected layer with no area of its own leaves nothing to act on`() {
+        // An unmasked layer renders as "applies everywhere". Offering Invert on that would mean
+        // "cover nothing", which reads as the layer vanishing rather than as an inversion.
+        val state = withLayer(Mask())
+        assertNull(state.activeMask)
+        assertFalse(state.canClearArea)
+    }
+
+    @Test
+    fun `a drawn area is never what a layer is already wearing`() {
+        // Drawing a second shape with a layer selected: the shape combines with nothing, so the
+        // layer's own area cannot be eaten by it before Apply is pressed.
+        val layerArea = area()
+        val drawn = area(offset = 0.4f)
+        val state = withLayer(layerArea).copy(selection = drawn)
+
+        assertEquals("a further stroke builds on the drawn shape", drawn, state.drawingBase)
+        assertTrue("and there is an obvious way to hand it over", state.canApplySelection)
+    }
+
+    @Test
+    fun `aiming at a layer's mask is what makes drawing edit it`() {
+        val layerArea = area()
+        val state = withLayer(layerArea).copy(maskTarget = 1L)
+        assertEquals(layerArea, state.drawingBase)
+    }
+
+    @Test
+    fun `there is nothing to apply without both a shape and a layer to give it to`() {
+        assertFalse(
+            "a shape and no layer is what + Effect is for",
+            PerfectEditUiState(panel = EditorPanel.Effects, selection = area()).canApplySelection,
+        )
+        assertFalse("and a layer with nothing drawn has nothing to take", withLayer(area()).canApplySelection)
     }
 
     @Test

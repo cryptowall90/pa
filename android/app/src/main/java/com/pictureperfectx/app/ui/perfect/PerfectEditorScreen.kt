@@ -1125,6 +1125,15 @@ private fun describeDrawing(state: PerfectEditUiState): String {
     state.targetedLayer?.let { layer ->
         return "Editing ${layer.name}'s area — $doing to ${state.selectionMode.verb}."
     }
+    // A drawn area with a layer selected is the state that used to be silently useless: the shape
+    // was on screen, the layer went on using the area it already had, and nothing said why. Naming
+    // the button that joins them is the difference between a bug and a step.
+    state.document.selected?.let { layer ->
+        if (state.selection != null) {
+            return "Area drawn — tap Apply to ${layer.name} to ${state.selectionMode.verb}, " +
+                "or add an effect to use it on a new one."
+        }
+    }
     if (state.activeMask == null) {
         return "${doing.replaceFirstChar { it.uppercase() }}, then add an effect to apply it only there."
     }
@@ -1516,9 +1525,9 @@ private fun ToolBar(state: PerfectEditUiState, viewModel: PerfectEditorViewModel
 /**
  * Zone two: the stack, and what to do with the area.
  *
- * Add and Layers are always present — a selected layer used to push them off the end of a scrolling
- * row. Invert and Clear only appear with an area to act on, since inverting an empty mask means
- * "cover nothing", which would silently make the layer vanish rather than doing what was asked.
+ * Add and Layers are pinned, so nothing can push them off the end. Everything after them depends on
+ * what is in hand and scrolls, which is what lets the row grow without either of the two buttons
+ * that are always wanted going missing.
  */
 @Composable
 private fun StackBar(
@@ -1528,26 +1537,65 @@ private fun StackBar(
     onOpenLayers: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         PanelChip(label = "+ Effect", isSelected = true, onClick = onAdd)
         LayersButton(state = state, onClick = onOpenLayers)
-        if (state.selectionTool == SelectionTool.Wand) {
-            PanelChip(
-                label = if (state.wandContiguous) "This area" else "All alike",
-                isSelected = !state.wandContiguous,
-                onClick = viewModel::onToggleWandContiguous,
-            )
-        }
-        if (state.activeMask != null) {
-            PanelChip(
-                label = "Invert",
-                isSelected = state.activeMask?.inverted == true,
-                onClick = viewModel::onInvertMask,
-            )
-            PanelChip(label = "Clear", onClick = viewModel::onClearMask)
+        LazyRow(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            if (state.selectionTool == SelectionTool.Wand) {
+                item {
+                    PanelChip(
+                        label = if (state.wandContiguous) "This area" else "All alike",
+                        isSelected = !state.wandContiguous,
+                        onClick = viewModel::onToggleWandContiguous,
+                    )
+                }
+            }
+            // The step that makes a drawn area mean something: it belongs to the document until it
+            // is deliberately handed to a layer. First in the row, because with something drawn it
+            // is almost always what you meant to do next.
+            if (state.canApplySelection) {
+                val layer = state.document.selected
+                if (layer != null) {
+                    item {
+                        PanelChip(
+                            label = "Apply to ${layer.name}",
+                            isSelected = true,
+                            onClick = viewModel::onApplySelection,
+                        )
+                    }
+                }
+            }
+            // Inverting an empty mask means "cover nothing", which would make the layer silently
+            // vanish rather than do what was asked — so it needs an area to act on.
+            if (state.activeMask != null) {
+                item {
+                    PanelChip(
+                        label = "Invert",
+                        isSelected = state.activeMask?.inverted == true,
+                        onClick = viewModel::onInvertMask,
+                    )
+                }
+            }
+            if (state.canClearArea) {
+                item {
+                    PanelChip(
+                        label = if (state.selection != null) "Deselect" else "Clear",
+                        onClick = viewModel::onClearMask,
+                    )
+                }
+            }
+            // Putting the stack down. Without it the only way to stop editing a layer was to add
+            // another one, which is a strange thing to have to do to look at the photo.
+            if (state.document.selected != null) {
+                item { PanelChip(label = "Done", onClick = viewModel::onDeselectLayer) }
+            }
         }
     }
 }

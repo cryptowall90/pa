@@ -43,6 +43,7 @@ import com.pictureperfectx.app.layers.MaskWand
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
+import com.pictureperfectx.app.layers.combinedWith
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -253,16 +254,38 @@ data class PerfectEditUiState(
         get() = maskTarget?.let { id -> document.layers.firstOrNull { it.id == id } }
 
     /**
-     * The area currently being edited: a targeted layer's mask, or the floating selection.
+     * The layer whose mask the area controls write to, or null when they act on the selection.
+     *
+     * The rule that was missing: with a layer selected and nothing drawn, Feather and Invert should
+     * act on **that layer's area**, because it is the only area on screen. They used to write to the
+     * floating selection regardless, which is attached to nothing — so they appeared to do nothing
+     * at all, and the same mistake made a drawn area never reach the layer it was drawn for.
+     */
+    val focusLayer: Layer?
+        get() = targetedLayer
+            ?: document.selected?.takeIf { selection == null && !it.mask.isEmpty }
+
+    /**
+     * The area currently being edited: a targeted or selected layer's mask, or the selection.
      *
      * One resolution, so the outline, the handles, Feather, Invert and Clear all follow whichever
      * is live without any of them having to know which it is.
      */
     val activeMask: Mask?
+        get() = focusLayer?.mask?.takeUnless { it.isEmpty } ?: selection
+
+    /** What a newly drawn shape combines with — never a layer's area unless it is targeted. */
+    val drawingBase: Mask?
         get() = targetedLayer?.mask?.takeUnless { it.isEmpty } ?: selection
 
     /** True while drawing would change a layer's area rather than start a new selection. */
     val isEditingMask: Boolean get() = targetedLayer != null
+
+    /** A drawn area waiting to be given to the selected layer. */
+    val canApplySelection: Boolean get() = selection != null && document.selected != null
+
+    /** There is *something* to take back: a drawn area, or an area a layer is already wearing. */
+    val canClearArea: Boolean get() = selection != null || focusLayer != null
 }
 
 /**
@@ -1057,16 +1080,45 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * Drops the area, putting the layer back to covering the whole photo.
      *
      * The only way out of an area other than undo, which is no help once you've made other edits
-     * since. On a layer it's an empty mask; before one, the pending selection simply goes.
+     * since. A drawn selection goes first: it is the newer of the two and the one under the finger,
+     * so "clear" reads as taking back what was just drawn rather than stripping a layer bare.
      */
     fun onClearMask() {
         val state = _state.value
-        val target = state.targetedLayer
-        if (target == null) {
+        if (state.selection != null) {
             _state.update { it.copy(selection = null) }
             return
         }
-        commit(state.document.setMask(target.id, Mask()))
+        val layer = state.focusLayer ?: return
+        commit(state.document.setMask(layer.id, Mask()))
+    }
+
+    /**
+     * Hands the drawn area to the selected layer, combined by New / Add / Subtract.
+     *
+     * The step that used to be missing entirely. Drawing makes a *floating* selection so a second
+     * area can never quietly overwrite the first, but nothing then carried it across — so circling
+     * a new spot changed nothing and the layer went on using the area it already had. This is the
+     * carry across, and it is deliberately a button rather than automatic: which of two areas an
+     * effect should use is a decision, not something to guess.
+     */
+    fun onApplySelection() {
+        val state = _state.value
+        val drawn = state.selection ?: return
+        val layer = state.document.selected ?: return
+        val combined = layer.mask.combinedWith(drawn, state.selectionMode)
+        _state.update { it.copy(selection = null) }
+        commit(state.document.setMask(layer.id, combined))
+    }
+
+    /**
+     * Puts the stack down: nothing selected, nothing targeted.
+     *
+     * Without it the only way to stop editing a layer was to add another one, which is a strange
+     * thing to have to do to simply look at the photo.
+     */
+    fun onDeselectLayer() {
+        _state.update { it.copy(document = it.document.select(null), maskTarget = null) }
     }
 
     fun onLayerFilter(id: Long, filterId: String) {
@@ -1176,7 +1228,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             contiguous = state.wandContiguous,
             mode = state.selectionMode,
         )
-        applySelection(state, chosen, record = true)
+        applyDrawn(state, chosen, record = true)
     }
 
     /** The canvas as one packed-ARGB value per mask cell. */
@@ -1217,7 +1269,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun onGradientStart() {
         val state = _state.value
-        gradientBase = state.activeMask
+        gradientBase = state.drawingBase
     }
 
     /** A gradient dragged from [start] to [end], both normalized. */
@@ -1237,7 +1289,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             base
         }
-        applySelection(state, MaskGradient.fill(onto, spec, mode), record = false)
+        applyDrawn(state, MaskGradient.fill(onto, spec, mode), record = false)
     }
 
     /** The falloff slider: where along the run the gradient reaches halfway. */
@@ -1277,7 +1329,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             drawn = path,
             mode = state.selectionMode,
         )
-        applySelection(state, filled, record = true)
+        applyDrawn(state, filled, record = true)
     }
 
     /**
@@ -1299,7 +1351,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             radius = state.brushRadius,
             erase = mode == SelectionMode.Subtract,
         )
-        applySelection(state, painted, record = false)
+        applyDrawn(state, painted, record = false)
     }
 
     /**
@@ -1385,7 +1437,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
      * from nothing would silently wipe the effect out instead of trimming it.
      */
     private fun selectionBase(state: PerfectEditUiState, mode: SelectionMode): Mask {
-        val current = state.activeMask
+        val current = state.drawingBase
         return when {
             mode == SelectionMode.Replace -> Mask.forRatio(state.canvasRatio)
             current != null -> current
@@ -1396,19 +1448,38 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Writes a drawn area where it belongs: a targeted layer's mask, or the floating selection.
+     * Reshapes the area that is *on screen* — Feather, Invert, dragging a handle.
      *
-     * The floating selection is the default and the layer's mask is the exception, which is the
-     * whole point — drawing can no longer change an area you already made unless you asked for it
-     * by tapping that layer's mask thumbnail.
+     * These follow [PerfectEditUiState.focusLayer], which includes a merely selected layer, because
+     * its area is the one being looked at. They used to follow the same rule as drawing and so
+     * wrote to a floating selection attached to nothing: the slider moved and the photo didn't.
      */
     private fun applySelection(state: PerfectEditUiState, mask: Mask, record: Boolean) {
-        val target = state.targetedLayer
-        if (target == null) {
+        writeArea(state, state.focusLayer, mask, record)
+    }
+
+    /**
+     * Puts a newly drawn shape where it belongs: a *targeted* layer's mask, or the selection.
+     *
+     * The floating selection is the default and a layer's mask is the exception, which is the whole
+     * point — drawing can no longer change an area you already made unless you asked for it by
+     * tapping that layer's mask thumbnail. Getting it to a merely selected layer is [onApplySelection].
+     */
+    private fun applyDrawn(state: PerfectEditUiState, mask: Mask, record: Boolean) {
+        writeArea(state, state.targetedLayer, mask, record)
+    }
+
+    private fun writeArea(
+        state: PerfectEditUiState,
+        layer: Layer?,
+        mask: Mask,
+        record: Boolean,
+    ) {
+        if (layer == null) {
             _state.update { it.copy(selection = mask) }
             return
         }
-        val document = state.document.setMask(target.id, mask)
+        val document = state.document.setMask(layer.id, mask)
         if (record) commit(document) else applyDocument(document, record = false)
     }
 
