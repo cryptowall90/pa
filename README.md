@@ -127,25 +127,75 @@ Fully native Kotlin. No cross-platform runtime.
 
 ### Perfect Editor (`ui/perfect/`)
 
-The heavier editing surface, opened with the crop icon in the photo viewer. Its first release is
-geometry:
+The heavier editing surface, opened with the crop icon in the photo viewer. A **layered,
+non-destructive** editor: every layer is a *description* of a change, never pixels, which is what
+makes undo a stack of snapshots, the preview and the export agree by construction, and a saved edit
+reopenable months later.
+
+#### Layers
+
+- A **stack** of effects, each with its own opacity, blend mode, visibility and area: Tone, Look
+  (any of the 100 filters), Curves, Text, Shape, Smooth, Heal, Whiten, Brighten, Gradient and Fill.
+- The **layer sheet** reorders, duplicates, hides, cycles blend modes and deletes.
+- **Undo covers everything** — layers *and* framing, so the arrow takes a crop back off.
+- **Drafts**: stop mid-edit and pick it up later, without exporting anything.
+
+#### Choosing an area
+
+- Four tools: **Lasso** (draw round it), **Brush** (paint it), **Fade** (a gradient across the
+  frame) and **Wand** (tap a colour). Each combines with what you have by **New / Add / Subtract**.
+- A drawn area is a **floating selection** belonging to the document, not to any layer — so drawing
+  a second one can never overwrite the first layer's work. **Apply to \<layer\>** hands it over;
+  **+ Effect** gives it to a new one.
+- **Points**: a brushed, wand-picked or faded area has no shape, only coverage. This traces its
+  boundary (`layers/MaskTrace.kt`, marching squares chained into rings) into a couple of dozen
+  draggable handles, so it can be adjusted rather than repainted.
+- **Feather**, **Invert** and **Deselect / Clear** act on whichever area is on screen.
+- **Pinch to zoom** with a magnifier under the finger for precision.
+
+#### Seeing what you're doing
+
+- Nothing ever covers the photo: every control sits below it.
+- **Press and hold** the photo to see it *before* the edit; let go to come back.
+- The **eye** shows the edit *without* any outline, handle or dot — the photo exactly as it would
+  save — and one more tap returns to editing.
+
+#### Geometry
 
 - **Crop** with a draggable frame — corner and edge handles, rule-of-thirds grid, dimmed surround.
 - **Aspect ratios**: Original, Free, 1:1, 4:5, 9:16, 16:9, 3:2, 4:3, 5:7. With a ratio locked,
   corners resize proportionally and the frame can be dragged around.
 - **Straighten** (−45°…45°), **rotate** in quarter turns, and **flip** both ways. Straightening
   scales just enough to cover the frame, so a levelled photo never shows empty corners.
-- **Tone**: **blacks, shadows, highlights and whites**, each −100…100. A `Crop` / `Tone` switch
-  swaps the bottom controls, and the crop frame hides while judging tone. GPUImage's own
-  highlight/shadow filter only lightens shadows and only darkens highlights, so
-  `capture/GPUImageToneFilter.kt` is a custom one-pass shader that weights each adjustment by where
-  a pixel sits in the luminance range — overlapping bands, so the four controls blend rather than
-  band at their edges.
-- The edit is a declarative `ImageGeometry` (flips → turns → straighten → crop) with the crop held
-  in **normalized 0..1 coordinates**, so the preview and the full-resolution export frame
+- The framing is a declarative `ImageGeometry` (flips → turns → straighten → crop) with the crop
+  held in **normalized 0..1 coordinates**, so the preview and the full-resolution export frame
   identically by construction. The maths lives in `capture/ImageGeometry.kt`, free of Android types
-  and **covered by unit tests** — the only part of the editor CI can actually execute.
-- Saves as a **new photo**; the source is never modified.
+  and **covered by unit tests**.
+- Export orients, **then** composites the stack, **then** crops — the same order the preview uses,
+  and the only order that can be right: a mask means "this fraction of the frame", so cropping first
+  would land every mask, caption and gradient somewhere the preview never showed.
+- Saves as a **new photo**; the source is never modified. The stack is written beside it, so the
+  edit can be reopened and revised rather than being the last thing that happens to that photo.
+
+> **Known limitation:** a mask is normalized against the *oriented* frame, and rotating, flipping or
+> straightening re-orients the photo without moving the masks with it. Frame the photo before
+> masking it; doing it the other way round leaves the effect where the frame used to be.
+
+#### Tone
+
+**Exposure, contrast, blacks, shadows, highlights, whites, saturation, vibrance and warmth**, each
+−100…100, per layer and through any area. GPUImage's own highlight/shadow filter only lightens
+shadows and only darkens highlights, so `capture/GPUImageToneFilter.kt` is a custom one-pass shader
+that weights each adjustment by where a pixel sits in the luminance range — overlapping bands, so
+the controls blend rather than band at their edges.
+
+#### What CI can actually check
+
+`dl.google.com` is blocked in the sandbox this is developed in, so nothing here compiles locally and
+CI is the only build. That shapes the code: the geometry, the masks (lasso, brush, wand, gradient,
+outline tracing, combination), the curves, the colour conversion, the run-length codec, the layer
+stack and its undo history are all **pure Kotlin with no Android types**, and all covered by unit
+tests. The Compose surface on top is the part that has to be judged on a phone.
 
 ### Light editor (`ui/edit/`)
 
