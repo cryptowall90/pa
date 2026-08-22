@@ -184,6 +184,13 @@ data class PerfectEditUiState(
     val panel: EditorPanel = EditorPanel.Closed,
     /** Geometry plus the layer stack applied — what's displayed. */
     val canvas: Bitmap? = null,
+    /**
+     * The same photo with the geometry applied but **no layers** — what a press-and-hold shows.
+     *
+     * Kept rather than rendered: the compositor already works from this bitmap every time a layer
+     * changes, so a before/after peek costs a swap and no work at all.
+     */
+    val original: Bitmap? = null,
     val document: Document = Document(),
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
@@ -381,6 +388,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                     geometry = restored?.geometry ?: ImageGeometry(),
                     document = restored?.document ?: Document(),
                     canvas = preview,
+                    original = preview,
                     ready = full != null,
                     notice = when {
                         loaded == null -> "This photo couldn't be opened for editing."
@@ -421,7 +429,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { LayerRenderer.render(getApplication(), oriented, _state.value.document) }
                     .getOrDefault(oriented)
             }
-            _state.update { it.copy(canvas = canvas) }
+            _state.update { it.copy(canvas = canvas, original = oriented) }
         }
     }
 
@@ -511,7 +519,9 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             val rendered = withContext(Dispatchers.Default) {
                 runCatching { LayerRenderer.render(getApplication(), source, document) }
             }
-            rendered.onSuccess { canvas -> _state.update { it.copy(canvas = canvas) } }
+            rendered.onSuccess { canvas ->
+                _state.update { it.copy(canvas = canvas, original = source) }
+            }
             // Swallowing this left the previous canvas on screen, so a failed GPU pass and a layer
             // that simply does nothing looked identical. Say which it was.
             rendered.onFailure { error ->
@@ -545,6 +555,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 val ratioTarget = current.geometry.aspect.ratio(ratio)
                 current.copy(
                     canvas = canvas,
+                    original = oriented,
                     // A reshaped canvas changes what a locked ratio means, so re-fit the crop.
                     geometry = if (ratioTarget == null) {
                         current.geometry
