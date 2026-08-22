@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -1878,17 +1879,35 @@ private fun EffectPickerRow(onPick: (EffectKind) -> Unit, onCancel: () -> Unit) 
 
 // ---- Shared pieces ------------------------------------------------------------------------------
 
-/** How softly the effect stops at the area's edge, for whichever area is live. */
+/**
+ * How softly the effect stops at the area's edge, plus a way to get hold of that edge.
+ *
+ * The two belong together: softening an edge is the moment you start caring exactly where it runs,
+ * and until now a brushed, wand-picked or faded area had no points to take hold of at all — the only
+ * way to adjust one was to paint over it again.
+ */
 @Composable
 private fun FeatherSlider(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
-    val feather = state.activeMask?.feather ?: return
-    ValueSlider(
-        value = feather,
-        range = 0f..1f,
-        readout = "${(feather * 100).roundToInt()}",
-        onChange = viewModel::onFeather,
-        onChangeFinished = viewModel::commitLayerEdit,
-    )
+    val mask = state.activeMask ?: return
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ValueSlider(
+            value = mask.feather,
+            range = 0f..1f,
+            readout = "${(mask.feather * 100).roundToInt()}",
+            onChange = viewModel::onFeather,
+            onChangeFinished = viewModel::commitLayerEdit,
+            modifier = Modifier.weight(1f),
+        )
+        // A lasso already carries its points, so offering to derive them would be a button that
+        // replaces a hand-drawn shape with an approximation of itself.
+        if (mask.path == null) {
+            PanelChip(label = "Points", onClick = viewModel::onTraceArea)
+            Spacer(modifier = Modifier.width(20.dp))
+        }
+    }
 }
 
 /**
@@ -1902,9 +1921,10 @@ private fun ValueSlider(
     readout: String,
     onChange: (Float) -> Unit,
     onChangeFinished: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Slider(

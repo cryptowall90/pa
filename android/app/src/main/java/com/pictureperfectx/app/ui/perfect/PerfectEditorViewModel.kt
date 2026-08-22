@@ -40,6 +40,7 @@ import com.pictureperfectx.app.layers.MaskBrush
 import com.pictureperfectx.app.layers.MaskGradient
 import com.pictureperfectx.app.layers.MaskLasso
 import com.pictureperfectx.app.layers.MaskPoint
+import com.pictureperfectx.app.layers.MaskTrace
 import com.pictureperfectx.app.layers.MaskWand
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
@@ -1127,6 +1128,35 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         val combined = layer.mask.combinedWith(drawn, state.selectionMode)
         _state.update { it.copy(selection = null) }
         commit(state.document.setMask(layer.id, combined))
+    }
+
+    /**
+     * Gives a painted area draggable points, derived from where its edge actually runs.
+     *
+     * A lasso keeps the points it was drawn with. A brush, a wand or a fade has only coverage, so
+     * once the area was made the only way to adjust it was to paint over it again — and an area is
+     * easy to get roughly right and tedious to get exactly right, which is what handles are for.
+     */
+    fun onTraceArea() {
+        val state = _state.value
+        val area = state.activeMask ?: return
+        val traced = MaskTrace.outline(area)
+        if (!traced.isUsable) {
+            _state.update { it.copy(notice = "There's no edge to follow — paint an area first.") }
+            return
+        }
+        val redrawn = MaskLasso.shape(
+            mask = Mask.forRatio(state.canvasRatio).copy(feather = area.feather),
+            handles = traced.points,
+        )
+        applySelection(state, redrawn, record = true)
+        // Only the longest ring becomes points, so a two-part area loses its smaller half. Said
+        // plainly rather than left to be discovered: undo is right there.
+        if (traced.loops > 1) {
+            _state.update {
+                it.copy(notice = "Followed the largest area. The other ${traced.loops - 1} weren't kept.")
+            }
+        }
     }
 
     /**
