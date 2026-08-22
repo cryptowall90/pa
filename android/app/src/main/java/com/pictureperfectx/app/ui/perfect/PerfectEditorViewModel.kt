@@ -394,7 +394,7 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
             // The ViewModel is Activity-scoped and reused, so every load starts from scratch —
             // including the layer stack and its undo history, which would otherwise carry a
             // previous photo's edits onto this one.
-            history = History()
+            history = History(current = restored ?: EditDocument())
             _state.update {
                 PerfectEditUiState(
                     geometry = restored?.geometry ?: ImageGeometry(),
@@ -451,6 +451,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Crop changes come straight from the overlay's drag maths, already in normalized space. */
     fun onCropChanged(crop: CropRect) = updateGeometry { it.copy(crop = CropMath.clamp(crop)) }
 
+    /**
+     * The end of a crop drag or a straighten, which is what becomes one undo step.
+     *
+     * Every frame of a drag would bury the history under hundreds of entries, so framing follows the
+     * same rule the sliders do: the gesture ending records it, not the gesture moving.
+     */
+    fun commitFraming() = commitGeometry(_state.value.geometry)
+
     fun onAspectSelected(aspect: AspectRatio) {
         val canvasRatio = _state.value.canvasRatio
         val ratio = aspect.ratio(canvasRatio)
@@ -461,28 +469,29 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
                 crop = if (ratio == null) geometry.crop else CropMath.centeredCrop(canvasRatio, ratio),
             )
         }
+        commitGeometry(_state.value.geometry)
     }
 
     fun onRotate(clockwise: Boolean) {
         val geometry = _state.value.geometry
-        applyGeometry(
-            geometry.copy(
-                quarterTurns = geometry.quarterTurns + if (clockwise) 1 else -1,
-                // The canvas swaps axes, so the old crop would mean something else entirely.
-                crop = CropRect(),
-            ),
+        val turned = geometry.copy(
+            quarterTurns = geometry.quarterTurns + if (clockwise) 1 else -1,
+            // The canvas swaps axes, so the old crop would mean something else entirely.
+            crop = CropRect(),
         )
+        applyGeometry(turned)
+        commitGeometry(turned)
     }
 
     fun onFlip(horizontal: Boolean) {
         val geometry = _state.value.geometry
-        applyGeometry(
-            if (horizontal) {
-                geometry.copy(flipHorizontal = !geometry.flipHorizontal)
-            } else {
-                geometry.copy(flipVertical = !geometry.flipVertical)
-            },
-        )
+        val flipped = if (horizontal) {
+            geometry.copy(flipHorizontal = !geometry.flipHorizontal)
+        } else {
+            geometry.copy(flipVertical = !geometry.flipVertical)
+        }
+        applyGeometry(flipped)
+        commitGeometry(flipped)
     }
 
     fun onStraighten(degrees: Float) {
@@ -1416,17 +1425,37 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Records an undo step, then re-renders. */
+    /** Records a layer change as an undo step, keeping the framing that is already in force. */
     private fun commit(document: Document) {
-        history = history.push(document)
+        history = history.push(EditDocument(geometry = _state.value.geometry, document = document))
         applyDocument(document, record = false)
     }
 
+    /**
+     * Records a framing change as an undo step.
+     *
+     * Crop, rotate, flip and straighten used to record nothing at all, so the undo arrow sat there
+     * looking like it should take a crop back off and did nothing.
+     */
+    private fun commitGeometry(geometry: ImageGeometry) {
+        history = history.push(EditDocument(geometry = geometry, document = _state.value.document))
+        _state.update { it.copy(canUndo = history.canUndo, canRedo = history.canRedo) }
+    }
+
+    /** Puts a whole remembered edit back: the stack, and the framing it was made under. */
     private fun applyHistory() {
-        applyDocument(history.current, record = false)
+        val edit = history.current
+        val reframed = edit.geometry != _state.value.geometry
+        _state.update { it.copy(document = edit.document, canUndo = history.canUndo, canRedo = history.canRedo) }
+        // A framing change has to re-orient the preview before the stack can be composited onto it;
+        // a layer change composites onto the one already there.
+        if (reframed) applyGeometry(edit.geometry) else schedulePreview()
     }
 
     private fun applyDocument(document: Document, record: Boolean) {
-        if (record) history = history.push(document)
+        if (record) {
+            history = history.push(EditDocument(geometry = _state.value.geometry, document = document))
+        }
         _state.update {
             it.copy(document = document, canUndo = history.canUndo, canRedo = history.canRedo)
         }

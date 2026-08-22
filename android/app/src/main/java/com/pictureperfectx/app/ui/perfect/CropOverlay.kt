@@ -40,6 +40,7 @@ fun CropOverlay(
     lockedRatio: Float?,
     sourceRatio: Float,
     onCropChanged: (CropRect) -> Unit,
+    onCropCommitted: () -> Unit = {},
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
 ) {
@@ -59,7 +60,7 @@ fun CropOverlay(
                     working = latestCrop
                     handle = handleAt(position, working.toScreen(imageBounds), lockedRatio != null)
                 },
-                onDragEnd = { handle = null },
+                onDragEnd = { handle = null; onCropCommitted() },
                 onDragCancel = { handle = null },
             ) { change, drag ->
                 change.consume()

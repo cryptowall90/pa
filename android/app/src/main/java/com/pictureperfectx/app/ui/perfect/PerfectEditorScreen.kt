@@ -183,6 +183,7 @@ fun PerfectEditorScreen(
             EditorStage(
                 state = state,
                 onCropChanged = viewModel::onCropChanged,
+                onCropCommitted = viewModel::commitFraming,
                 onPaint = viewModel::onPaintMask,
                 onStrokeEnd = viewModel::endStroke,
                 onLasso = viewModel::onLassoCommitted,
@@ -222,6 +223,7 @@ fun PerfectEditorScreen(
                             StraightenSlider(
                                 degrees = state.geometry.straightenDegrees,
                                 onChange = viewModel::onStraighten,
+                                onFinished = viewModel::commitFraming,
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -437,6 +439,7 @@ private fun BackToMenu(onClick: () -> Unit) {
 private fun EditorStage(
     state: PerfectEditUiState,
     onCropChanged: (CropRect) -> Unit,
+    onCropCommitted: () -> Unit,
     onPaint: (Float, Float) -> Unit,
     onStrokeEnd: () -> Unit,
     onLasso: (List<MaskPoint>) -> Unit,
@@ -546,6 +549,7 @@ private fun EditorStage(
                 lockedRatio = state.geometry.aspect.ratio(state.canvasRatio),
                 sourceRatio = state.canvasRatio,
                 onCropChanged = onCropChanged,
+                onCropCommitted = onCropCommitted,
                 modifier = Modifier.fillMaxSize(),
             )
             return@Box
@@ -1875,7 +1879,12 @@ private fun PanelChip(label: String, isSelected: Boolean = false, onClick: () ->
 }
 
 @Composable
-private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit, modifier: Modifier = Modifier) {
+private fun StraightenSlider(
+    degrees: Float,
+    onChange: (Float) -> Unit,
+    onFinished: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Row(
         modifier = modifier.padding(end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1884,6 +1893,8 @@ private fun StraightenSlider(degrees: Float, onChange: (Float) -> Unit, modifier
         Slider(
             value = degrees,
             onValueChange = onChange,
+            // The gesture ending is one undo step; every frame of it would be hundreds.
+            onValueChangeFinished = onFinished,
             valueRange = -CropMath.MAX_STRAIGHTEN_DEGREES..CropMath.MAX_STRAIGHTEN_DEGREES,
             colors = SliderDefaults.colors(
                 thumbColor = Brand,

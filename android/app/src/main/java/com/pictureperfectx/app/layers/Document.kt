@@ -87,21 +87,27 @@ data class Document(
 }
 
 /**
- * Undo/redo as a stack of whole documents.
+ * Undo/redo as a stack of whole edits.
  *
- * Snapshots are viable precisely because a [Document] stores descriptions rather than pixels — the
- * usual objection to snapshot undo, that it costs an image per step, doesn't apply here.
+ * Snapshots are viable precisely because an [EditDocument] stores descriptions rather than pixels —
+ * the usual objection to snapshot undo, that it costs an image per step, doesn't apply here.
+ *
+ * It holds the *whole* edit, framing included, rather than just the layer stack. Holding only the
+ * stack meant a crop, a rotate or a straighten recorded nothing: the undo arrow sat there looking
+ * like it should take the crop back off, and did nothing at all. And an [EditDocument] is already
+ * exactly what a draft and a saved edit serialize, so undo now describes an edit the same way they
+ * do rather than in a shape of its own.
  */
 data class History(
-    val current: Document = Document(),
-    private val past: List<Document> = emptyList(),
-    private val future: List<Document> = emptyList(),
+    val current: EditDocument = EditDocument(),
+    private val past: List<EditDocument> = emptyList(),
+    private val future: List<EditDocument> = emptyList(),
 ) {
     val canUndo: Boolean get() = past.isNotEmpty()
     val canRedo: Boolean get() = future.isNotEmpty()
 
     /** Records a new state. Redo is dropped, since the timeline has branched. */
-    fun push(next: Document): History {
+    fun push(next: EditDocument): History {
         if (next == current) return this
         return History(current = next, past = (past + current).takeLast(LIMIT), future = emptyList())
     }

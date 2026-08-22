@@ -1,5 +1,7 @@
 package com.pictureperfectx.app.layers
 
+import com.pictureperfectx.app.capture.CropRect
+import com.pictureperfectx.app.capture.ImageGeometry
 import com.pictureperfectx.app.capture.ToneAdjustments
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -217,10 +219,14 @@ class DocumentTest {
         assertFalse(history.canRedo)
     }
 
+    /** A step in the history: the stack, and the framing it was made under. */
+    private fun step(document: Document = Document(), geometry: ImageGeometry = ImageGeometry()) =
+        EditDocument(geometry = geometry, document = document)
+
     @Test
     fun `undo returns the previous state and redo replays it`() {
-        val first = Document().add(::tone)
-        val second = first.add(::tone)
+        val first = step(Document().add(::tone))
+        val second = step(first.document.add(::tone))
         val history = History().push(first).push(second)
 
         val undone = history.undo()
@@ -231,17 +237,42 @@ class DocumentTest {
 
     @Test
     fun `pushing an identical state does not add a history step`() {
-        val document = Document().add(::tone)
+        val document = step(Document().add(::tone))
         val history = History().push(document)
         assertEquals(history, history.push(document))
     }
 
     @Test
     fun `a new edit after undo drops the redo branch`() {
-        val first = Document().add(::tone)
-        val second = first.add(::tone)
-        val branched = History().push(first).push(second).undo().push(first.add(::tone))
+        val first = step(Document().add(::tone))
+        val second = step(first.document.add(::tone))
+        val branched = History().push(first).push(second).undo().push(step(first.document.add(::tone)))
         assertFalse("the redone future belonged to an abandoned timeline", branched.canRedo)
+    }
+
+    @Test
+    fun `a crop is an undo step, not something undo silently ignores`() {
+        // History used to hold only the layer stack, so cropping, rotating or straightening recorded
+        // nothing at all — the undo arrow sat there looking like it should take the crop back off.
+        val stack = Document().add(::tone)
+        val uncropped = step(stack)
+        val cropped = step(stack, ImageGeometry(crop = CropRect(0.2f, 0.2f, 0.8f, 0.8f)))
+        val history = History().push(uncropped).push(cropped)
+
+        assertTrue("the crop is a step of its own", history.canUndo)
+        assertEquals(uncropped.geometry, history.undo().current.geometry)
+        assertEquals("and the stack came along untouched", stack, history.undo().current.document)
+    }
+
+    @Test
+    fun `a rotate and a layer change are separate steps`() {
+        val start = step()
+        val turned = step(geometry = ImageGeometry(quarterTurns = 1))
+        val layered = step(Document().add(::tone), ImageGeometry(quarterTurns = 1))
+        val history = History().push(start).push(turned).push(layered)
+
+        assertEquals("undo takes the layer back", turned, history.undo().current)
+        assertEquals("undo again takes the rotation back", start, history.undo().undo().current)
     }
 
     @Test
