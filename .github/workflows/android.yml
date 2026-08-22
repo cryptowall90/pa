@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      # Publishing the build as a release writes to the repository.
+      contents: write
     defaults:
       run:
         working-directory: android
@@ -39,3 +42,24 @@ jobs:
           name: picture-perfect-x-debug
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
+
+      # An artifact is the right record of a CI run and the wrong way to get a build onto a phone:
+      # it is zipped, it needs a signed-in session, it expires, and GitHub's mobile views don't show
+      # artifacts at all. A release asset is a plain .apk at a plain URL that a phone can just tap.
+      #
+      # Debug rather than release on purpose: the release build type has no signing config, so
+      # assembleRelease produces an unsigned APK that Android refuses to install.
+      - name: Publish the APK somewhere a phone can reach
+        # Only the branches actually being tested — every branch would fight over the one tag.
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'claude/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk picture-perfect-x-debug.apk
+          # Recreated rather than reused, so the tag points at the commit that built this.
+          gh release delete debug-latest --yes --cleanup-tag || true
+          gh release create debug-latest picture-perfect-x-debug.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Latest debug build" \
+            --notes "Debug build of ${GITHUB_SHA:0:7} on ${GITHUB_REF_NAME}. Installs alongside any other copy of the app."

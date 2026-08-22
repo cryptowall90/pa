@@ -4,6 +4,16 @@ A native, real-time filtered camera app in the spirit of Retrica. Point the
 camera, scrub through film-style looks, and tap the shutter to save a
 full-resolution filtered photo to your gallery.
 
+## Install the latest build
+
+**[picture-perfect-x-debug.apk](https://github.com/cryptowall90/pa/releases/download/debug-latest/picture-perfect-x-debug.apk)**
+— tap it on the phone. No sign-in, no zip.
+
+Rebuilt by CI on every push, so the link always serves the current code. It is a
+**debug** build: signed with the standard debug key, and its application id ends
+in `.debug`, so it installs *alongside* any other copy rather than replacing it.
+You will need to allow installs from your browser the first time.
+
 This repository is structured for **two native apps that share a product, not
 code**:
 
