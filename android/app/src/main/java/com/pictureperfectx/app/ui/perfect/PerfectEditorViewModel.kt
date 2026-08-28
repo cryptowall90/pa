@@ -261,6 +261,38 @@ enum class LayerControl(
     }
 }
 
+/** One entry in the control row: a drawer you can open, or a control you can choose. */
+sealed interface ChipItem {
+    data class Group(val group: ControlGroup, val isOpen: Boolean) : ChipItem
+    data class Control(val control: LayerControl) : ChipItem
+}
+
+/**
+ * The control row, one level deep.
+ *
+ * A Tone layer offers nine adjustments, and nine chips in a row is a thicket you scroll past rather
+ * than read. Each group contributes a single chip, and only the open one spills its members out
+ * behind it — so the row is `Light · Color · Opacity` until you ask for more, and never becomes a
+ * second screen.
+ *
+ * [expanded] is not stored anywhere: it is the group of whichever control is showing. That way the
+ * open drawer and the slider under it cannot get out of step, which is the usual bug in a control
+ * like this.
+ */
+fun chipItems(controls: List<LayerControl>, expanded: ControlGroup?): List<ChipItem> = buildList {
+    val opened = mutableSetOf<ControlGroup>()
+    for (control in controls) {
+        val group = control.group
+        if (group == null) {
+            add(ChipItem.Control(control))
+            continue
+        }
+        // The first member of a group is where its chip goes; the rest add nothing on their own.
+        if (opened.add(group)) add(ChipItem.Group(group, isOpen = group == expanded))
+        if (group == expanded) add(ChipItem.Control(control))
+    }
+}
+
 data class PerfectEditUiState(
     val geometry: ImageGeometry = ImageGeometry(),
     val panel: EditorPanel = EditorPanel.Closed,

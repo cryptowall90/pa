@@ -1074,30 +1074,62 @@ private fun EffectsControls(
     val controls = LayerControl.forLayer(layer)
     val control = LayerControl.effective(controls, state.control)
 
+    ControlChips(layer = layer, controls = controls, control = control, viewModel = viewModel)
+    LayerInspector(layer = layer, control = control, state = state, viewModel = viewModel)
+    StatusLine(text = describe(layer, state))
+}
+
+/**
+ * The one row that says what about this effect you are changing.
+ *
+ * Grouped controls contribute a single chip and open in place, so a Tone layer reads
+ * `Light · Color · Opacity` rather than putting nine adjustments in a row nobody reads to the end
+ * of. Which group is open follows the control that is showing, so the two cannot disagree.
+ */
+@Composable
+private fun ControlChips(
+    layer: Layer,
+    controls: List<LayerControl>,
+    control: LayerControl,
+    viewModel: PerfectEditorViewModel,
+) {
+    val items = chipItems(controls, control.group)
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        items(controls, key = { it.name }) { candidate ->
-            // A toggle changes the layer and leaves the slider where it was, so it is never the
-            // chip that looks chosen — it reports its own on/off state instead.
-            if (candidate.kind == ControlKind.Toggle) {
-                PanelChip(
-                    label = candidate.label,
-                    isSelected = candidate.isOn(layer),
-                ) { viewModel.onToggleControl(layer.id, candidate) }
-            } else {
-                PanelChip(label = candidate.label, isSelected = candidate == control) {
-                    viewModel.onSelectControl(candidate)
+        items(items, key = { it.key }) { item ->
+            when (item) {
+                is ChipItem.Group -> PanelChip(
+                    label = item.group.label,
+                    isSelected = item.isOpen,
+                ) { viewModel.onSelectGroup(controls, item.group) }
+
+                // A toggle changes the layer and leaves the slider where it was, so it is never the
+                // chip that looks chosen — it reports its own on/off state instead.
+                is ChipItem.Control -> if (item.control.kind == ControlKind.Toggle) {
+                    PanelChip(
+                        label = item.control.label,
+                        isSelected = item.control.isOn(layer),
+                    ) { viewModel.onToggleControl(layer.id, item.control) }
+                } else {
+                    PanelChip(
+                        label = item.control.label,
+                        isSelected = item.control == control,
+                    ) { viewModel.onSelectControl(item.control) }
                 }
             }
         }
     }
-
-    LayerInspector(layer = layer, control = control, state = state, viewModel = viewModel)
-    StatusLine(text = describe(layer, state))
 }
+
+/** Stable across an open and close, so opening a group doesn't animate every chip out and back. */
+private val ChipItem.key: String
+    get() = when (this) {
+        is ChipItem.Group -> "group:${group.name}"
+        is ChipItem.Control -> control.name
+    }
 
 /** What is being edited, where it lands, and what touching the photo will do next. */
 private fun describe(layer: Layer, state: PerfectEditUiState): String {
