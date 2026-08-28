@@ -1101,20 +1101,21 @@ private fun ControlChips(
     ) {
         items(items, key = { it.key }) { item ->
             when (item) {
-                is ChipItem.Group -> PanelChip(
+                is ChipItem.Group -> SelectorChip(
                     label = item.group.label,
                     isSelected = item.isOpen,
                 ) { viewModel.onSelectGroup(controls, item.group) }
 
-                // A toggle changes the layer and leaves the slider where it was, so it is never the
-                // chip that looks chosen — it reports its own on/off state instead.
+                // A toggle changes the layer and leaves the slider where it was, so it never wears
+                // the lit style that means "this is what you're looking at" — it reports its own
+                // on/off state instead.
                 is ChipItem.Control -> if (item.control.kind == ControlKind.Toggle) {
-                    PanelChip(
+                    ToggleChip(
                         label = item.control.label,
-                        isSelected = item.control.isOn(layer),
+                        isOn = item.control.isOn(layer),
                     ) { viewModel.onToggleControl(layer.id, item.control) }
                 } else {
-                    PanelChip(
+                    SelectorChip(
                         label = item.control.label,
                         isSelected = item.control == control,
                     ) { viewModel.onSelectControl(item.control) }
@@ -1358,7 +1359,7 @@ private fun <T> ChipRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(items) { item ->
-            PanelChip(label = label(item), isSelected = isSelected(item)) { onSelect(item) }
+            SelectorChip(label = label(item), isSelected = isSelected(item)) { onSelect(item) }
         }
     }
 }
@@ -1572,7 +1573,7 @@ private fun StackBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        PanelChip(label = "+ Effect", isSelected = true, onClick = onAdd)
+        ActionChip(label = "+ Effect", emphasis = true, onClick = onAdd)
         LayersButton(state = state, onClick = onOpenLayers)
         LazyRow(
             modifier = Modifier.weight(1f),
@@ -1581,9 +1582,9 @@ private fun StackBar(
         ) {
             if (state.selectionTool == SelectionTool.Wand) {
                 item {
-                    PanelChip(
+                    ToggleChip(
                         label = if (state.wandContiguous) "This area" else "All alike",
-                        isSelected = !state.wandContiguous,
+                        isOn = !state.wandContiguous,
                         onClick = viewModel::onToggleWandContiguous,
                     )
                 }
@@ -1595,9 +1596,9 @@ private fun StackBar(
                 val layer = state.document.selected
                 if (layer != null) {
                     item {
-                        PanelChip(
+                        ActionChip(
                             label = "Apply to ${layer.name}",
-                            isSelected = true,
+                            emphasis = true,
                             onClick = viewModel::onApplySelection,
                         )
                     }
@@ -1607,16 +1608,16 @@ private fun StackBar(
             // vanish rather than do what was asked — so it needs an area to act on.
             if (state.activeMask != null) {
                 item {
-                    PanelChip(
+                    ToggleChip(
                         label = "Invert",
-                        isSelected = state.activeMask?.inverted == true,
+                        isOn = state.activeMask?.inverted == true,
                         onClick = viewModel::onInvertMask,
                     )
                 }
             }
             if (state.canClearArea) {
                 item {
-                    PanelChip(
+                    ActionChip(
                         label = if (state.selection != null) "Deselect" else "Clear",
                         onClick = viewModel::onClearMask,
                     )
@@ -1625,7 +1626,7 @@ private fun StackBar(
             // Putting the stack down. Without it the only way to stop editing a layer was to add
             // another one, which is a strange thing to have to do to look at the photo.
             if (state.document.selected != null) {
-                item { PanelChip(label = "Done", onClick = viewModel::onDeselectLayer) }
+                item { ActionChip(label = "Done", onClick = viewModel::onDeselectLayer) }
             }
         }
     }
@@ -1635,9 +1636,8 @@ private fun StackBar(
 @Composable
 private fun LayersButton(state: PerfectEditUiState, onClick: () -> Unit) {
     val count = state.document.layers.size
-    PanelChip(
+    ActionChip(
         label = if (count == 0) "Layers" else "Layers · $count",
-        isSelected = false,
         onClick = onClick,
     )
 }
@@ -1886,9 +1886,9 @@ private fun EffectPickerRow(onPick: (EffectKind) -> Unit, onCancel: () -> Unit) 
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(EffectKind.entries.toList(), key = { it.name }) { kind ->
-            PanelChip(label = kind.label, isSelected = true) { onPick(kind) }
+            ActionChip(label = kind.label) { onPick(kind) }
         }
-        item { PanelChip(label = "Cancel", onClick = onCancel) }
+        item { ActionChip(label = "Cancel", onClick = onCancel) }
     }
 }
 
@@ -1919,7 +1919,7 @@ private fun FeatherSlider(state: PerfectEditUiState, viewModel: PerfectEditorVie
         // A lasso already carries its points, so offering to derive them would be a button that
         // replaces a hand-drawn shape with an approximation of itself.
         if (mask.path == null) {
-            PanelChip(label = "Points", onClick = viewModel::onTraceArea)
+            ActionChip(label = "Points", onClick = viewModel::onTraceArea)
             Spacer(modifier = Modifier.width(20.dp))
         }
     }
@@ -1965,16 +1965,84 @@ private fun ValueSlider(
     }
 }
 
+/*
+ * Three kinds of chip, because there are three kinds of promise.
+ *
+ * Every chip in this panel used to be one component, so a chip that chooses *which slider is
+ * showing* looked exactly like a chip that *does something* — "+ Effect" was drawn permanently lit,
+ * in the same solid Brand a chosen slider gets. That is most of why nothing said what it did.
+ *
+ * The rule the eye can learn in one screen: **solid means "this is what you're looking at"**,
+ * **outlined means "tap me and something happens"**, and a tinted outline means "this is switched
+ * on".
+ */
+
+/** Chooses which control is showing. Exactly one in a row is lit. */
 @Composable
-private fun PanelChip(label: String, isSelected: Boolean = false, onClick: () -> Unit) {
+private fun SelectorChip(label: String, isSelected: Boolean, onClick: () -> Unit) {
+    ChipSurface(
+        label = label,
+        shape = RoundedCornerShape(10.dp),
+        fill = if (isSelected) Brand else Color(0x14FFFFFF),
+        border = null,
+        text = if (isSelected) Color.White else Color(0x99FFFFFF),
+        weight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+        onClick = onClick,
+    )
+}
+
+/**
+ * Does something. Never solid, so it can't be mistaken for the lit selector.
+ *
+ * [emphasis] is for the one action that is usually the next thing you want — adding an effect, or
+ * handing a drawn area to a layer.
+ */
+@Composable
+private fun ActionChip(label: String, emphasis: Boolean = false, onClick: () -> Unit) {
+    ChipSurface(
+        label = label,
+        shape = RoundedCornerShape(8.dp),
+        fill = Color.Transparent,
+        border = if (emphasis) Brand else Color(0x55FFFFFF),
+        text = if (emphasis) Brand else Color(0xDDFFFFFF),
+        weight = if (emphasis) FontWeight.SemiBold else FontWeight.Normal,
+        onClick = onClick,
+    )
+}
+
+/** A setting that is on or off. Action-shaped, because tapping it changes the picture. */
+@Composable
+private fun ToggleChip(label: String, isOn: Boolean, onClick: () -> Unit) {
+    ChipSurface(
+        label = label,
+        shape = RoundedCornerShape(8.dp),
+        fill = if (isOn) Color(0x33FF4D6D) else Color.Transparent,
+        border = if (isOn) Brand else Color(0x55FFFFFF),
+        text = if (isOn) Brand else Color(0xDDFFFFFF),
+        weight = if (isOn) FontWeight.SemiBold else FontWeight.Normal,
+        onClick = onClick,
+    )
+}
+
+@Composable
+private fun ChipSurface(
+    label: String,
+    shape: RoundedCornerShape,
+    fill: Color,
+    border: Color?,
+    text: Color,
+    weight: FontWeight,
+    onClick: () -> Unit,
+) {
     Text(
         text = label,
-        color = if (isSelected) Color.White else Color(0xCCFFFFFF),
+        color = text,
         fontSize = 10.sp,
-        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+        fontWeight = weight,
         modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isSelected) Brand else Color(0x22FFFFFF))
+            .clip(shape)
+            .background(fill)
+            .then(if (border != null) Modifier.border(1.dp, border, shape) else Modifier)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     )
