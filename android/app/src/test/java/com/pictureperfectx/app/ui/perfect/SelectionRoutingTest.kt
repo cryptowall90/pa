@@ -61,6 +61,15 @@ class SelectionRoutingTest {
     }
 
     @Test
+    fun `drawing needs the tools on screen, even though reshaping does not`() {
+        // A drag on the photo while adjusting an effect would otherwise start a lasso — a shape you
+        // never asked for, on a panel showing no tool you could have drawn it with.
+        assertTrue(PerfectEditUiState(panel = EditorPanel.Area).canDraw)
+        assertFalse(PerfectEditUiState(panel = EditorPanel.Effects).canDraw)
+        assertFalse(PerfectEditUiState(panel = EditorPanel.Area, previewing = true).canDraw)
+    }
+
+    @Test
     fun `the gradient shapes are on screen with a layer selected, not only without one`() {
         // The reported regression: the five Fade styles rendered only when nothing was selected, so
         // they vanished the moment an effect existed. On the area panel there is no such fork, and

@@ -375,6 +375,16 @@ data class PerfectEditUiState(
         get() = (panel == EditorPanel.Effects || panel == EditorPanel.Area) && !previewing
 
     /**
+     * Whether touching the photo *draws*, as opposed to reshaping what is already there.
+     *
+     * Narrower than [canSelect] on purpose. A Text or Shape layer's placement handle is dragged
+     * while adjusting the effect, so handles have to work on both panels — but a drag that starts a
+     * new lasso would be a shape you never asked for, on a panel showing no tool to have drawn it
+     * with. Drawing is what the area panel is for.
+     */
+    val canDraw: Boolean get() = panel == EditorPanel.Area && !previewing
+
+    /**
      * A crop that has been set but not saved is invisible once its controls are put away, since the
      * crop is applied at export rather than baked into the preview. Showing it read-only stops that
      * being a surprise at save time; an untouched photo shows nothing at all.

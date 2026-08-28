@@ -590,6 +590,7 @@ private fun EditorStage(
         val latestBounds by rememberUpdatedState(bounds)
         val latestHandles by rememberUpdatedState(editHandles(state))
         val canSelect = state.canSelect
+        val canDraw = state.canDraw
         val tool = state.selectionTool
         val healing = state.document.selected is Layer.Heal
 
@@ -600,7 +601,7 @@ private fun EditorStage(
                     // A zoomed-in canvas with no way back is a trap.
                     detectTapGestures(onDoubleTap = { scale = 1f; offset = Offset.Zero })
                 }
-                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, tool, healing) {
+                .pointerInput(stageSize, canvas.width, canvas.height, canSelect, canDraw, tool, healing) {
                     val handleRadius = HANDLE_TOUCH_RADIUS.dp.toPx()
                     val minStep = 3.dp.toPx()
                     val touchSlop = viewConfiguration.touchSlop
@@ -632,7 +633,10 @@ private fun EditorStage(
                              * pinch leaving a stray wand selection or heal dab behind.
                              */
                             fun begin() {
+                                // A grabbed handle is reshaping, not drawing, so it works on either
+                                // panel; everything else here needs the tools to be on screen.
                                 if (began || !canSelect) return
+                                if (grabbed < 0 && !canDraw) return
                                 began = true
                                 touch = first.position
                                 when {
@@ -695,7 +699,7 @@ private fun EditorStage(
                             if (settled == Settled.Lifted) {
                                 // A tap. The tools that act on one act now, on release rather than on
                                 // press, so a hold could have meant something else.
-                                if (canSelect && grabbed < 0) {
+                                if (canDraw && grabbed < 0) {
                                     val point = first.position.normalizedIn(latestBounds)
                                     if (point.x in 0f..1f && point.y in 0f..1f) {
                                         when {
