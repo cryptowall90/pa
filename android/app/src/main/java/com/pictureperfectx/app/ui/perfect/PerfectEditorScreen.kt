@@ -1071,8 +1071,8 @@ private fun EffectsControls(
         return
     }
 
-    val controls = LayerControl.forLayer(layer, state.selectionTool)
-    val control = if (state.control in controls) state.control else controls.first()
+    val controls = LayerControl.forLayer(layer)
+    val control = LayerControl.effective(controls, state.control)
 
     LazyRow(
         modifier = Modifier.fillMaxWidth(),
@@ -1080,8 +1080,17 @@ private fun EffectsControls(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(controls, key = { it.name }) { candidate ->
-            PanelChip(label = candidate.label, isSelected = candidate == control) {
-                viewModel.onSelectControl(candidate)
+            // A toggle changes the layer and leaves the slider where it was, so it is never the
+            // chip that looks chosen — it reports its own on/off state instead.
+            if (candidate.kind == ControlKind.Toggle) {
+                PanelChip(
+                    label = candidate.label,
+                    isSelected = candidate.isOn(layer),
+                ) { viewModel.onToggleControl(layer.id, candidate) }
+            } else {
+                PanelChip(label = candidate.label, isSelected = candidate == control) {
+                    viewModel.onSelectControl(candidate)
+                }
             }
         }
     }
@@ -1213,6 +1222,17 @@ private fun LayerInspector(
             onSelect = { viewModel.onTextFont(layer.id, it) },
         )
 
+        // The five shapes a gradient runs in, as a control of their own. They used to hide under
+        // the chip labelled Falloff, which is a different thing entirely.
+        control == LayerControl.GradientStylePick && layer is Layer.Gradient -> ChipRow(
+            items = GradientStyle.entries.toList(),
+            label = { it.label },
+            isSelected = { it == layer.spec.style },
+            onSelect = { style ->
+                viewModel.onGradientLayerSpec(layer.id) { it.copy(style = style) }
+            },
+        )
+
         control == LayerControl.ShapeKindPick && layer is Layer.Shape -> ChipRow(
             items = ShapeKind.entries.toList(),
             label = { it.label },
@@ -1250,17 +1270,6 @@ private fun LayerInspector(
             // should have to aim for an exact corner of a picker for the two colours captions are
             // usually set in. The shortcuts ride with it rather than as a row of their own.
             ColourTones(layer = layer, control = control, viewModel = viewModel)
-            // The shape of the ramp belongs with the slider that shapes it.
-            if (layer is Layer.Gradient && control == LayerControl.Falloff && !layer.solid) {
-                ChipRow(
-                    items = GradientStyle.entries.toList(),
-                    label = { it.label },
-                    isSelected = { it == layer.spec.style },
-                    onSelect = { style ->
-                        viewModel.onGradientLayerSpec(layer.id) { it.copy(style = style) }
-                    },
-                )
-            }
         }
     }
 }
@@ -1288,27 +1297,15 @@ private fun ColourTones(layer: Layer, control: LayerControl, viewModel: PerfectE
             (control == LayerControl.ColourFrom || control == LayerControl.ColourTo) -> {
             val atStart = control == LayerControl.ColourFrom
             val colour = if (atStart) layer.from else layer.to
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                // Clear is a ramp idea — a fill of nothing is just a hidden layer.
-                items(
-                    ColourTone.entries.filter { !layer.solid || it != ColourTone.Clear },
-                    key = { it.name },
-                ) { tone ->
-                    PanelChip(label = tone.label, isSelected = tone == colour.tone) {
-                        viewModel.onGradientTone(layer.id, atStart, tone)
-                    }
-                }
-                // Turning this off is how a fill becomes a gradient, which is why they share a layer.
-                item {
-                    PanelChip(label = "Solid", isSelected = layer.solid) {
-                        viewModel.onToggleGradientSolid(layer.id)
-                    }
-                }
-            }
+            // Clear is a ramp idea — a fill of nothing is just a hidden layer. Solid used to ride
+            // along at the end of this row, which made turning a fill back into a gradient
+            // something you found by accident; it is a chip of its own now.
+            ChipRow(
+                items = ColourTone.entries.filter { !layer.solid || it != ColourTone.Clear },
+                label = { it.label },
+                isSelected = { it == colour.tone },
+                onSelect = { viewModel.onGradientTone(layer.id, atStart, it) },
+            )
         }
 
         else -> Unit
@@ -1481,20 +1478,6 @@ private fun ControlSlider(
                 onChangeFinished = viewModel::commitLayerEdit,
             )
         }
-
-        control == LayerControl.BrushSize -> ValueSlider(
-            value = state.brushRadius,
-            range = 0.02f..0.5f,
-            readout = "${(state.brushRadius * 100).roundToInt()}",
-            onChange = viewModel::onBrushRadius,
-        )
-
-        control == LayerControl.WandTolerance -> ValueSlider(
-            value = state.wandTolerance,
-            range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
-            readout = "${(state.wandTolerance * 100).roundToInt()}",
-            onChange = viewModel::onWandTolerance,
-        )
 
         control == LayerControl.Feather -> FeatherSlider(state = state, viewModel = viewModel)
 

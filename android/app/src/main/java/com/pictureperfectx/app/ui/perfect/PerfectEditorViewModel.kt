@@ -103,59 +103,123 @@ enum class SelectionTool(val label: String) {
 }
 
 /**
+ * What a chip in the control row actually does when tapped.
+ *
+ * They all looked identical, which is most of why nobody could tell what any of them did. A chip
+ * that chooses which slider is showing and a chip that flips a setting are different promises, and
+ * the row draws them differently now.
+ */
+enum class ControlKind {
+    /** Shows a slider. The common case. */
+    Slider,
+
+    /** Replaces the slider with something else — a text field, a curve, a row of choices. */
+    Picker,
+
+    /** Not a control at all: tapping it changes the layer, and the slider stays where it was. */
+    Toggle,
+}
+
+/**
+ * A drawer the control row can keep shut.
+ *
+ * A Tone layer has nine adjustments, and nine chips in one row is a thicket you scroll rather than
+ * read. These are the two groups every photo editor splits them into, and only the open one shows
+ * its contents.
+ */
+enum class ControlGroup(val label: String) {
+    Light("Light"),
+    Colour("Color"),
+}
+
+/**
  * The one property the effects panel's single slider is editing, picked from a row of chips.
  *
  * One slider at a time is what keeps the controls to a couple of short rows — and the controls
  * short is what keeps them from eating the photo they're meant to be adjusting.
  */
-enum class LayerControl(val label: String, val band: ToneBand? = null) {
-    ToneExposure(ToneBand.Exposure.label, ToneBand.Exposure),
-    ToneContrast(ToneBand.Contrast.label, ToneBand.Contrast),
-    ToneBlacks(ToneBand.Blacks.label, ToneBand.Blacks),
-    ToneShadows(ToneBand.Shadows.label, ToneBand.Shadows),
-    ToneHighlights(ToneBand.Highlights.label, ToneBand.Highlights),
-    ToneWhites(ToneBand.Whites.label, ToneBand.Whites),
-    ToneSaturation(ToneBand.Saturation.label, ToneBand.Saturation),
-    ToneVibrance(ToneBand.Vibrance.label, ToneBand.Vibrance),
-    ToneWarmth(ToneBand.Warmth.label, ToneBand.Warmth),
+enum class LayerControl(
+    val label: String,
+    val band: ToneBand? = null,
+    val group: ControlGroup? = null,
+    val kind: ControlKind = ControlKind.Slider,
+) {
+    ToneExposure(ToneBand.Exposure.label, ToneBand.Exposure, ControlGroup.Light),
+    ToneContrast(ToneBand.Contrast.label, ToneBand.Contrast, ControlGroup.Light),
+    ToneBlacks(ToneBand.Blacks.label, ToneBand.Blacks, ControlGroup.Light),
+    ToneShadows(ToneBand.Shadows.label, ToneBand.Shadows, ControlGroup.Light),
+    ToneHighlights(ToneBand.Highlights.label, ToneBand.Highlights, ControlGroup.Light),
+    ToneWhites(ToneBand.Whites.label, ToneBand.Whites, ControlGroup.Light),
+    ToneSaturation(ToneBand.Saturation.label, ToneBand.Saturation, ControlGroup.Colour),
+    ToneVibrance(ToneBand.Vibrance.label, ToneBand.Vibrance, ControlGroup.Colour),
+    ToneWarmth(ToneBand.Warmth.label, ToneBand.Warmth, ControlGroup.Colour),
     Blur("Blur"),
     Intensity("Strength"),
     Opacity("Opacity"),
     Feather("Feather"),
     Falloff("Falloff"),
-    ColourFrom("From"),
-    ColourTo("To"),
+    ColourFrom("Start"),
+    ColourTo("End"),
     TextSize("Size"),
     TextRotation("Rotate"),
     TextColour("Color"),
     ShapeStroke("Outline"),
     SmoothAmount("Amount"),
     HealSize("Spot size"),
-    BrushSize("Brush size"),
-    WandTolerance("Tolerance"),
 
-    // These five are controls that aren't a slider. They are chips in the same row as everything
-    // else, and what they open replaces the slider rather than stacking another row beneath it —
-    // which is what used to put six rows under the photo for a text layer.
-    TextContent("Words"),
-    TextTypeface("Font"),
-    ShapeKindPick("Shape"),
-    LookPick("Filter"),
-    CurveGraph("Curve");
+    // Controls that aren't a slider. They are chips in the same row as everything else, and what
+    // they open replaces the slider rather than stacking another row beneath it — which is what
+    // used to put six rows under the photo for a text layer.
+    TextContent("Words", kind = ControlKind.Picker),
+    TextTypeface("Font", kind = ControlKind.Picker),
+    ShapeKindPick("Shape", kind = ControlKind.Picker),
+    LookPick("Filter", kind = ControlKind.Picker),
+    CurveGraph("Curve", kind = ControlKind.Picker),
+
+    /**
+     * The five shapes a gradient can run in, as a chip of their own.
+     *
+     * They were reachable only by tapping *Falloff* — a chip named after something else — and, on a
+     * flat fill, not at all until Solid had been switched off from inside the row of colour
+     * shortcuts. Six taps to find a thing that should be one.
+     */
+    GradientStylePick("Style", kind = ControlKind.Picker),
+
+    /** Flat colour or a ramp. The first thing you decide about a gradient, so the first chip. */
+    GradientSolid("Solid", kind = ControlKind.Toggle);
+
+    /**
+     * Whether a [ControlKind.Toggle] is currently on.
+     *
+     * A toggle chip reports the layer's state rather than saying "this is the control you are
+     * looking at", which is the one thing every chip used to claim indiscriminately.
+     */
+    fun isOn(layer: Layer): Boolean = when (this) {
+        GradientSolid -> layer is Layer.Gradient && layer.solid
+        else -> false
+    }
 
     companion object {
-        /** What [layer] offers, plus brush size when the brush is what's in hand. */
-        fun forLayer(layer: Layer, tool: SelectionTool): List<LayerControl> = buildList {
+        /**
+         * What [layer] offers, in chip order.
+         *
+         * Deliberately nothing to do with which selection tool is in hand: brush size and wand
+         * tolerance are settings for *choosing an area*, and they live on the Area panel with the
+         * tools they belong to rather than padding out every layer's row.
+         */
+        fun forLayer(layer: Layer): List<LayerControl> = buildList {
             when (layer) {
                 // Declaration order is the chip order, and taking the list straight from the enum
                 // means a band added to ToneAdjustments can't be left without a control.
                 is Layer.Tone -> addAll(entries.filter { it.band != null })
                 is Layer.Blur -> add(Blur)
                 is Layer.Gradient -> {
+                    add(GradientSolid)
                     add(ColourFrom)
                     // A fill has one colour, so a second control for it would be a duplicate — and
-                    // the shape of the ramp means nothing when both ends match.
-                    if (!layer.solid) { add(ColourTo); add(Falloff) }
+                    // neither the shape of the ramp nor its falloff means anything when both ends
+                    // match.
+                    if (!layer.solid) { add(ColourTo); add(GradientStylePick); add(Falloff) }
                 }
                 // A curve's control is the graph itself, not a slider.
                 is Layer.Curve -> add(CurveGraph)
@@ -177,9 +241,23 @@ enum class LayerControl(val label: String, val band: ToneBand? = null) {
             // Falloff belongs to a gradient, so it only appears when there is one to shape. A
             // gradient layer has its own and offered it above.
             if (layer.mask.gradient != null && layer !is Layer.Gradient) add(Falloff)
-            if (tool == SelectionTool.Brush) add(BrushSize)
-            if (tool == SelectionTool.Wand) add(WandTolerance)
         }
+
+        /**
+         * The control the panel should actually show, given what was last chosen.
+         *
+         * Two things it has to survive: a control that isn't on offer for this layer, and a
+         * [ControlKind.Toggle], which changes the layer rather than showing anything — landing on
+         * one would leave the panel with no control at all.
+         */
+        fun effective(controls: List<LayerControl>, current: LayerControl): LayerControl {
+            val shows = controls.filter { it.kind != ControlKind.Toggle }
+            return current.takeIf { it in shows } ?: shows.firstOrNull() ?: Opacity
+        }
+
+        /** The chip a group opens onto, which is simply the first of its members on offer. */
+        fun firstOf(controls: List<LayerControl>, group: ControlGroup): LayerControl? =
+            controls.firstOrNull { it.group == group }
     }
 }
 
@@ -1237,6 +1315,24 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Which single property the panel's slider is editing. */
     fun onSelectControl(control: LayerControl) = _state.update { it.copy(control = control) }
 
+    /** Opens a group of controls by selecting the first of them, so the slider follows the chip. */
+    fun onSelectGroup(controls: List<LayerControl>, group: ControlGroup) {
+        LayerControl.firstOf(controls, group)?.let(::onSelectControl)
+    }
+
+    /**
+     * A [ControlKind.Toggle] chip: changes the layer, and leaves the slider where it was.
+     *
+     * Routed here rather than through [onSelectControl] because these are not a choice of what to
+     * show — selecting one would leave the panel with nothing under the chip row.
+     */
+    fun onToggleControl(id: Long, control: LayerControl) {
+        when (control) {
+            LayerControl.GradientSolid -> onToggleGradientSolid(id)
+            else -> Unit
+        }
+    }
+
     /** Slider drags don't each deserve an undo step; the gesture ending pushes one. */
     fun commitLayerEdit() = commit(_state.value.document)
 
@@ -1307,6 +1403,11 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(gradientStyle = style) }
         // Restyling an existing gradient in place is the point of the chips; redrawing to change
         // shape would throw away a placement that was probably already right.
+        //
+        // This branch was unreachable for as long as these chips only rendered with *nothing*
+        // selected: activeMask resolves through the selected layer, so the one state that could
+        // satisfy it was the one state that hid the chips. It works once the tools live on a panel
+        // of their own, which does not care what is selected.
         _state.value.activeMask?.gradient?.let { current ->
             if (current.style != style) placeGradient(current.copy(style = style), record = true)
         }
