@@ -9,6 +9,7 @@ import com.pictureperfectx.app.layers.MaskLasso
 import com.pictureperfectx.app.layers.MaskPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -43,6 +44,32 @@ class SelectionRoutingTest {
             panel = EditorPanel.Effects,
             document = document.select(document.layers.single().id),
         )
+    }
+
+    @Test
+    fun `the area tools have their own panel, and drawing survives leaving it`() {
+        // Choosing where an effect applies is its own errand, so the tools moved off the effect's
+        // controls. But a Text or Shape layer's placement handle is dragged from the effects panel,
+        // so drawing cannot be confined to the area panel alone.
+        val drawn = area()
+        assertTrue(PerfectEditUiState(panel = EditorPanel.Area, selection = drawn).canSelect)
+        assertTrue(PerfectEditUiState(panel = EditorPanel.Effects, selection = drawn).canSelect)
+        assertFalse("cropping is a different tool entirely",
+            PerfectEditUiState(panel = EditorPanel.Crop).canSelect)
+        assertFalse("and a clean preview must not take a stray stroke",
+            PerfectEditUiState(panel = EditorPanel.Area, previewing = true).canSelect)
+    }
+
+    @Test
+    fun `the gradient shapes are on screen with a layer selected, not only without one`() {
+        // The reported regression: the five Fade styles rendered only when nothing was selected, so
+        // they vanished the moment an effect existed. On the area panel there is no such fork, and
+        // that is also what makes restyling an area in place reachable at all.
+        val faded = MaskGradient.fill(Mask.blank(32, 32), GradientSpec())
+        val state = withLayer(faded).copy(panel = EditorPanel.Area)
+
+        assertTrue(state.canSelect)
+        assertNotNull("there is a gradient to restyle", state.activeMask?.gradient)
     }
 
     @Test

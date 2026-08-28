@@ -50,6 +50,15 @@ class EditHandlesTest {
     }
 
     @Test
+    fun `handles survive the trip to the area panel and back`() {
+        // The tools moved to a panel of their own. Reshaping by handle has to work on both, or
+        // stepping across to change an area would take the points out from under your finger.
+        val mask = lassoed()
+        assertEquals(mask.path, editHandles(editing(mask = mask).copy(panel = EditorPanel.Area)))
+        assertEquals(mask.path, editHandles(editing(mask = mask).copy(panel = EditorPanel.Effects)))
+    }
+
+    @Test
     fun `a lassoed area offers the points it kept`() {
         val mask = lassoed()
         assertEquals(mask.path, editHandles(editing(mask = mask)))

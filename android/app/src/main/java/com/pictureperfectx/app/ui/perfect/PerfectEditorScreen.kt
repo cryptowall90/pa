@@ -172,7 +172,11 @@ fun PerfectEditorScreen(
     LaunchedEffect(state.savedMessage) {
         state.savedMessage?.let { snackbar.showSnackbar(it); viewModel.consumeMessage() }
     }
-    BackHandler(onBack = onBack)
+    // Choosing an area is an errand within the editor, so back steps out of it rather than
+    // abandoning the whole edit.
+    BackHandler {
+        if (state.panel == EditorPanel.Area) viewModel.onCloseArea() else onBack()
+    }
 
     Scaffold(
         containerColor = Color.Black,
@@ -218,6 +222,8 @@ fun PerfectEditorScreen(
                         onAddingEffect = { addingEffect = it },
                         onOpenLayers = { showingLayers = true },
                     )
+
+                    EditorPanel.Area -> AreaControls(state = state, viewModel = viewModel)
 
                     EditorPanel.Crop -> {
                         Row(
@@ -1040,14 +1046,8 @@ private fun EffectsControls(
 ) {
     val layer = state.document.selected
 
-    // Zone one: how an area gets chosen. Four tools and a mode, in fixed slots that always fit —
-    // this used to be a scrolling row of up to ten chips mixing tools, mask actions and layer
-    // actions, with Delete off the right-hand edge.
-    ToolBar(state = state, viewModel = viewModel)
-
-    // Zone two: the stack, and what to do with the area. Adding an effect and reaching the layers
-    // are always here — not conditionally, as they were when the stack lived in a scrolling row
-    // that a selected layer pushed off the end of.
+    // The stack: add one, reach the rest, and go and change where this one applies. Nothing about
+    // *choosing* an area is here any more — that is a panel of its own, one tap away.
     StackBar(
         state = state,
         viewModel = viewModel,
@@ -1065,9 +1065,16 @@ private fun EffectsControls(
         )
     }
 
-    // Zone three: exactly one control for whatever is selected, and a line saying what a tap does.
+    // With nothing selected there is no effect to describe, so the panel says what to do instead of
+    // filling up with settings for a tool you have not reached for.
     if (layer == null) {
-        ToolInspector(state = state, viewModel = viewModel)
+        StatusLine(
+            text = if (state.document.isEmpty) {
+                "Add an effect, or choose an area first and the next effect will use it."
+            } else {
+                "Tap a layer to adjust it, or add another effect."
+            },
+        )
         return
     }
 
@@ -1134,20 +1141,29 @@ private val ChipItem.key: String
 
 /** What is being edited, where it lands, and what touching the photo will do next. */
 private fun describe(layer: Layer, state: PerfectEditUiState): String {
-    val where = if (layer.mask.isEmpty) "the whole photo" else "its own area"
-    // Drawing no longer touches this layer unless its mask is the target, so the line has to say
-    // which of the two is about to change — that ambiguity is what used to destroy people's areas.
-    return "${layer.name} · applies to $where — ${describeDrawing(state).replaceFirstChar { it.lowercase() }}"
+    val where = if (layer.mask.isEmpty) "the whole photo" else "the area you drew"
+    // A shape drawn for the *next* effect is the one thing about this layer that isn't visible from
+    // its own controls, so it is the one thing this line adds.
+    val waiting = if (state.selection != null) " · an area is waiting — tap Area to apply it" else ""
+    return "${layer.name} · applies to $where$waiting"
 }
 
 /**
- * The settings for whichever tool is in hand, when no layer is selected yet.
+ * Choosing *where* an effect applies: a panel of its own.
  *
- * One block, never more than two rows, and it says in words what a tap or a drag will do — the one
- * thing the old panel never told anyone.
+ * All of this used to sit above the selected effect's controls at all times — four tools and three
+ * combine modes, eight buttons you were usually not using, on top of the ones you were. It is one
+ * errand, entered on purpose and left with Done, and everything about an area is here rather than
+ * spread across three rows that were each partly about something else.
+ *
+ * It also does not care what is selected, which is what puts the five gradient shapes back on
+ * screen: they used to render only with *nothing* selected, so they vanished the moment you added
+ * an effect and never came back.
  */
 @Composable
-private fun ToolInspector(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+private fun AreaControls(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+    ToolBar(state = state, viewModel = viewModel)
+
     when (state.selectionTool) {
         SelectionTool.Brush -> ValueSlider(
             value = state.brushRadius,
@@ -1156,12 +1172,26 @@ private fun ToolInspector(state: PerfectEditUiState, viewModel: PerfectEditorVie
             onChange = viewModel::onBrushRadius,
         )
 
-        SelectionTool.Wand -> ValueSlider(
-            value = state.wandTolerance,
-            range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
-            readout = "${(state.wandTolerance * 100).roundToInt()}",
-            onChange = viewModel::onWandTolerance,
-        )
+        // How alike a colour has to be, and whether the wand takes only the shape it was tapped on.
+        // Two settings for one tool, so they share the row rather than each taking one.
+        SelectionTool.Wand -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ValueSlider(
+                value = state.wandTolerance,
+                range = MaskWand.MIN_TOLERANCE..MaskWand.MAX_TOLERANCE,
+                readout = "${(state.wandTolerance * 100).roundToInt()}",
+                onChange = viewModel::onWandTolerance,
+                modifier = Modifier.weight(1f),
+            )
+            ToggleChip(
+                label = if (state.wandContiguous) "This area" else "All alike",
+                isOn = !state.wandContiguous,
+                onClick = viewModel::onToggleWandContiguous,
+            )
+            Spacer(modifier = Modifier.width(20.dp))
+        }
 
         SelectionTool.Fade -> ChipRow(
             items = GradientStyle.entries.toList(),
@@ -1176,7 +1206,52 @@ private fun ToolInspector(state: PerfectEditUiState, viewModel: PerfectEditorVie
     // An area can be softened before its effect is chosen, the same as after.
     if (state.activeMask != null) FeatherSlider(state = state, viewModel = viewModel)
 
+    AreaActions(state = state, viewModel = viewModel)
     StatusLine(text = describeDrawing(state))
+}
+
+/** What to do with the area now it exists — and the way back to what the effect does. */
+@Composable
+private fun AreaActions(state: PerfectEditUiState, viewModel: PerfectEditorViewModel) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // The step that makes a drawn area mean something: it belongs to the document until it is
+        // deliberately handed to a layer. First, because with something drawn it is almost always
+        // what you meant to do next.
+        val layer = state.document.selected
+        if (state.canApplySelection && layer != null) {
+            item {
+                ActionChip(
+                    label = "Apply to ${layer.name}",
+                    emphasis = true,
+                    onClick = viewModel::onApplySelection,
+                )
+            }
+        }
+        // Inverting an empty mask means "cover nothing", which would make the layer silently vanish
+        // rather than do what was asked — so it needs an area to act on.
+        if (state.activeMask != null) {
+            item {
+                ToggleChip(
+                    label = "Invert",
+                    isOn = state.activeMask?.inverted == true,
+                    onClick = viewModel::onInvertMask,
+                )
+            }
+        }
+        if (state.canClearArea) {
+            item {
+                ActionChip(
+                    label = if (state.selection != null) "Deselect" else "Clear",
+                    onClick = viewModel::onClearMask,
+                )
+            }
+        }
+        item { ActionChip(label = "Done", onClick = viewModel::onCloseArea) }
+    }
 }
 
 /**
@@ -1525,7 +1600,7 @@ private fun ControlSlider(
 }
 
 /**
- * Zone one: what you are drawing with.
+ * What you are drawing with, at the top of the area panel.
  *
  * Four tools in fixed slots that always fit, and the mode beside them. Deliberately not a scrolling
  * row — a control that has to be scrolled to is a control that isn't there, which is exactly what
@@ -1538,7 +1613,7 @@ private fun ToolBar(state: PerfectEditUiState, viewModel: PerfectEditorViewModel
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        BackToMenu(onClick = viewModel::onBackToMenu)
+        BackToMenu(onClick = viewModel::onCloseArea)
         Segmented(
             options = SelectionTool.entries.map { it.label },
             selectedIndex = SelectionTool.entries.indexOf(state.selectionTool),
@@ -1555,11 +1630,12 @@ private fun ToolBar(state: PerfectEditUiState, viewModel: PerfectEditorViewModel
 }
 
 /**
- * Zone two: the stack, and what to do with the area.
+ * The stack.
  *
- * Add and Layers are pinned, so nothing can push them off the end. Everything after them depends on
- * what is in hand and scrolls, which is what lets the row grow without either of the two buttons
- * that are always wanted going missing.
+ * Four buttons at most, all of them about the stack: add one, reach the rest, go and change where
+ * this one applies, or put it down. Everything about *choosing* an area has moved to the panel that
+ * is only about that — this row used to carry the wand's setting, Invert, Clear and Apply as well,
+ * none of which are anything to do with the stack.
  */
 @Composable
 private fun StackBar(
@@ -1569,65 +1645,19 @@ private fun StackBar(
     onOpenLayers: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ActionChip(label = "+ Effect", emphasis = true, onClick = onAdd)
         LayersButton(state = state, onClick = onOpenLayers)
-        LazyRow(
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(end = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (state.selectionTool == SelectionTool.Wand) {
-                item {
-                    ToggleChip(
-                        label = if (state.wandContiguous) "This area" else "All alike",
-                        isOn = !state.wandContiguous,
-                        onClick = viewModel::onToggleWandContiguous,
-                    )
-                }
-            }
-            // The step that makes a drawn area mean something: it belongs to the document until it
-            // is deliberately handed to a layer. First in the row, because with something drawn it
-            // is almost always what you meant to do next.
-            if (state.canApplySelection) {
-                val layer = state.document.selected
-                if (layer != null) {
-                    item {
-                        ActionChip(
-                            label = "Apply to ${layer.name}",
-                            emphasis = true,
-                            onClick = viewModel::onApplySelection,
-                        )
-                    }
-                }
-            }
-            // Inverting an empty mask means "cover nothing", which would make the layer silently
-            // vanish rather than do what was asked — so it needs an area to act on.
-            if (state.activeMask != null) {
-                item {
-                    ToggleChip(
-                        label = "Invert",
-                        isOn = state.activeMask?.inverted == true,
-                        onClick = viewModel::onInvertMask,
-                    )
-                }
-            }
-            if (state.canClearArea) {
-                item {
-                    ActionChip(
-                        label = if (state.selection != null) "Deselect" else "Clear",
-                        onClick = viewModel::onClearMask,
-                    )
-                }
-            }
+        // Where this effect applies. One chip instead of the eight buttons that used to be on
+        // screen whether or not you were choosing an area.
+        ActionChip(label = "Area", onClick = viewModel::onOpenArea)
+        if (state.document.selected != null) {
             // Putting the stack down. Without it the only way to stop editing a layer was to add
             // another one, which is a strange thing to have to do to look at the photo.
-            if (state.document.selected != null) {
-                item { ActionChip(label = "Done", onClick = viewModel::onDeselectLayer) }
-            }
+            ActionChip(label = "Done", onClick = viewModel::onDeselectLayer)
         }
     }
 }

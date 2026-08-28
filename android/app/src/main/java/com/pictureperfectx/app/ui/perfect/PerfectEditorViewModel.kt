@@ -70,7 +70,18 @@ enum class EditorPanel(val label: String) {
     Closed(""),
     Menu(""),
     Crop("Crop"),
+
+    /** What the selected effect does. Its controls, and nothing else. */
     Effects("Add effects"),
+
+    /**
+     * Where an effect applies: the four tools, the combine modes, and what to do with the area.
+     *
+     * A panel of its own because it is a different errand. All of it used to sit above the
+     * selected effect's controls at all times — eight buttons you were usually not using, on top of
+     * the ones you were.
+     */
+    Area("Area"),
 }
 
 /** An effect the user can add, as offered by the effects picker. */
@@ -360,7 +371,8 @@ data class PerfectEditUiState(
      * Areas can be drawn whenever effects are showing, with or without a layer selected — drawing
      * first and choosing the effect after is the whole point of a pending selection.
      */
-    val canSelect: Boolean get() = panel == EditorPanel.Effects && !previewing
+    val canSelect: Boolean
+        get() = (panel == EditorPanel.Effects || panel == EditorPanel.Area) && !previewing
 
     /**
      * A crop that has been set but not saved is invisible once its controls are put away, since the
@@ -672,6 +684,12 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Steps a tool back to the menu, so switching tools doesn't mean collapsing first. */
     fun onBackToMenu() = _state.update { it.copy(panel = EditorPanel.Menu) }
 
+    /** Goes to choose *where* an effect applies. The tools live here and nowhere else. */
+    fun onOpenArea() = _state.update { it.copy(panel = EditorPanel.Area) }
+
+    /** Back to what the effect does. Every errand on the area panel ends here. */
+    fun onCloseArea() = _state.update { it.copy(panel = EditorPanel.Effects) }
+
     // ---- Rendering ------------------------------------------------------------------------------
 
     /**
@@ -972,7 +990,15 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         // The selection has been spent: it is this layer's mask now, and leaving it floating would
         // hand the same area to the next effect added out of nowhere.
         _state.update {
-            it.copy(selection = null, maskTarget = null, control = control, selectionTool = tool)
+            it.copy(
+                selection = null,
+                maskTarget = null,
+                control = control,
+                selectionTool = tool,
+                // Adding an effect from the area panel means you are done choosing where; what it
+                // does is the next question.
+                panel = EditorPanel.Effects,
+            )
         }
         commit(document)
     }
@@ -1000,7 +1026,14 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onEditLayerMask(id: Long) {
         val state = _state.value
         val already = state.maskTarget == id
-        _state.update { it.copy(maskTarget = if (already) null else id) }
+        _state.update {
+            it.copy(
+                maskTarget = if (already) null else id,
+                // Tapping a mask thumbnail means "take me to that area", so it opens the panel the
+                // tools are on rather than leaving you to find it.
+                panel = if (already) it.panel else EditorPanel.Area,
+            )
+        }
         if (!already) applyDocument(state.document.select(id), record = false)
     }
 
@@ -1236,7 +1269,8 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
         val drawn = state.selection ?: return
         val layer = state.document.selected ?: return
         val combined = layer.mask.combinedWith(drawn, state.selectionMode)
-        _state.update { it.copy(selection = null) }
+        // The area errand is over: the shape has a home, so go back to what the effect does.
+        _state.update { it.copy(selection = null, panel = EditorPanel.Effects) }
         commit(state.document.setMask(layer.id, combined))
     }
 
@@ -1284,7 +1318,13 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onTogglePreview() = _state.update { it.copy(previewing = !it.previewing) }
 
     fun onDeselectLayer() {
-        _state.update { it.copy(document = it.document.select(null), maskTarget = null) }
+        _state.update {
+            it.copy(
+                document = it.document.select(null),
+                maskTarget = null,
+                panel = EditorPanel.Effects,
+            )
+        }
     }
 
     fun onLayerFilter(id: Long, filterId: String) {
