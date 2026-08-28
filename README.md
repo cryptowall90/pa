@@ -140,10 +140,23 @@ reopenable months later.
 - **Undo covers everything** — layers *and* framing, so the arrow takes a crop back off.
 - **Drafts**: stop mid-edit and pick it up later, without exporting anything.
 
+#### One thing at a time
+
+The panel under the photo shows what you are doing and nothing else. Adjusting an effect is
+**three rows**: `+` and its controls and `Layers · n`; the one control; and where it applies plus
+the way out. Choosing *where* an effect goes is a different errand, so it is a panel of its own,
+entered from **Area** and left with **Done**.
+
+A Tone layer's nine adjustments collapse into **Light** and **Color**, opening in place.
+
+Chips say what they do by how they look: **solid** is what you are looking at, **outlined** is a
+button, and a **tinted outline** is a setting that is on.
+
 #### Choosing an area
 
 - Four tools: **Lasso** (draw round it), **Brush** (paint it), **Fade** (a gradient across the
-  frame) and **Wand** (tap a colour). Each combines with what you have by **New / Add / Subtract**.
+  frame, in five shapes) and **Wand** (tap a colour). Each combines with what you have by
+  **New / Add / Subtract**.
 - A drawn area is a **floating selection** belonging to the document, not to any layer — so drawing
   a second one can never overwrite the first layer's work. **Apply to \<layer\>** hands it over;
   **+ Effect** gives it to a new one.

@@ -1,6 +1,7 @@
 package com.pictureperfectx.app.ui.perfect
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -18,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -61,6 +64,16 @@ fun ColourWheel(
     onPick: (GradientColour) -> Unit,
     onPicked: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * The shortcuts that skip the wheel, as swatches beside it rather than a row of their own.
+     *
+     * They were a row of chips underneath, which made a colour the only control in the editor that
+     * cost two rows. Black and white are reachable on the wheel in principle — the middle, and the
+     * bottom of the brightness slider — but nobody should have to aim for an exact corner of a
+     * picker to get the two colours captions are usually set in, and Clear is not on a wheel at all.
+     */
+    tones: List<ColourTone> = emptyList(),
+    onTone: (ColourTone) -> Unit = {},
 ) {
     // Recomposition happens on every frame of a drag, and the gesture block outlives all of them —
     // so it reads the latest callbacks through these rather than closing over the first ones.
@@ -150,7 +163,10 @@ fun ColourWheel(
         ) {
             // The colour as it will actually land, tone and all — the one thing on this control
             // that is never a guess about what the wheel means.
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Canvas(modifier = Modifier.size(18.dp)) {
                     drawCircle(swatch)
                     drawCircle(Color(0x55FFFFFF), style = Stroke(2f))
@@ -160,8 +176,15 @@ fun ColourWheel(
                     color = Brand,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.padding(start = 2.dp, end = 2.dp),
                 )
+                tones.forEach { tone ->
+                    ToneSwatch(
+                        tone = tone,
+                        isSelected = tone == colour.tone,
+                        onClick = { onTone(tone) },
+                    )
+                }
             }
             Text(text = "Brightness", color = Color(0xAAFFFFFF), fontSize = 10.sp)
             Slider(
@@ -177,5 +200,33 @@ fun ColourWheel(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+/**
+ * One shortcut colour, as the colour itself rather than its name.
+ *
+ * A swatch says what it will do without being read, which is the whole reason it can sit beside the
+ * wheel instead of taking a row of chips underneath it.
+ */
+@Composable
+private fun ToneSwatch(tone: ColourTone, isSelected: Boolean, onClick: () -> Unit) {
+    Canvas(
+        modifier = Modifier
+            .size(18.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+    ) {
+        when (tone) {
+            // Clear has no colour to show, so it shows the absence of one: a ring around nothing.
+            ColourTone.Clear -> drawCircle(Color(0x66FFFFFF), style = Stroke(3f))
+            ColourTone.Black -> drawCircle(Color.Black)
+            ColourTone.White -> drawCircle(Color.White)
+            ColourTone.Hue -> drawCircle(Color(0xFF000000.toInt() or hsvToRgb(200f)))
+        }
+        drawCircle(
+            color = if (isSelected) Brand else Color(0x55FFFFFF),
+            style = Stroke(if (isSelected) 4f else 2f),
+        )
     }
 }

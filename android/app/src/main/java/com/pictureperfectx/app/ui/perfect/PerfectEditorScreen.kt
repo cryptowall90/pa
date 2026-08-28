@@ -89,6 +89,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -1030,11 +1031,16 @@ private fun fittedBounds(
 // ---- Effects controls ---------------------------------------------------------------------------
 
 /**
- * Everything an effect needs, as a few short rows under the photo: what's in the stack, which
- * property the slider is on, that slider, and the actions.
+ * What the selected effect does, in three rows.
  *
- * The predecessor put all of this in a dialog, which meant the photo was behind a scrim exactly
- * when the slider was moving.
+ * One: `+` at the left, the effect's own controls scrolling between, `Layers · n` at the right —
+ * the two buttons that are always wanted are pinned where they cannot be scrolled past, and
+ * everything between them belongs to this effect. Two: the one control. Three: what it applies to,
+ * and the way out.
+ *
+ * It was eight rows and about fifty tap targets, because three unrelated jobs — choosing an area,
+ * managing the stack, adjusting the effect — were all on screen at once and only the third was
+ * usually what you were doing.
  */
 @Composable
 private fun EffectsControls(
@@ -1046,28 +1052,21 @@ private fun EffectsControls(
 ) {
     val layer = state.document.selected
 
-    // The stack: add one, reach the rest, and go and change where this one applies. Nothing about
-    // *choosing* an area is here any more — that is a panel of its own, one tap away.
-    StackBar(
-        state = state,
-        viewModel = viewModel,
-        onAdd = { onAddingEffect(true) },
-        onOpenLayers = onOpenLayers,
-    )
-
-    if (addingEffect) {
-        EffectPickerRow(
-            onPick = { kind ->
-                onAddingEffect(false)
-                viewModel.onAddEffect(kind)
-            },
-            onCancel = { onAddingEffect(false) },
-        )
-    }
-
-    // With nothing selected there is no effect to describe, so the panel says what to do instead of
-    // filling up with settings for a tool you have not reached for.
+    // With nothing selected there is no effect to describe, so the panel says what to do rather
+    // than filling up with settings for a tool nobody reached for.
     if (layer == null) {
+        StackBar(
+            state = state,
+            viewModel = viewModel,
+            onAdd = { onAddingEffect(true) },
+            onOpenLayers = onOpenLayers,
+        )
+        if (addingEffect) {
+            EffectPickerRow(
+                onPick = { kind -> onAddingEffect(false); viewModel.onAddEffect(kind) },
+                onCancel = { onAddingEffect(false) },
+            )
+        }
         StatusLine(
             text = if (state.document.isEmpty) {
                 "Add an effect, or choose an area first and the next effect will use it."
@@ -1081,9 +1080,62 @@ private fun EffectsControls(
     val controls = LayerControl.forLayer(layer)
     val control = LayerControl.effective(controls, state.control)
 
-    ControlChips(layer = layer, controls = controls, control = control, viewModel = viewModel)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Spacer(modifier = Modifier.width(12.dp))
+        ActionChip(label = "+", emphasis = true, onClick = { onAddingEffect(true) })
+        ControlChips(
+            layer = layer,
+            controls = controls,
+            control = control,
+            viewModel = viewModel,
+            modifier = Modifier.weight(1f),
+        )
+        LayersButton(state = state, onClick = onOpenLayers)
+        Spacer(modifier = Modifier.width(12.dp))
+    }
+
+    if (addingEffect) {
+        EffectPickerRow(
+            onPick = { kind -> onAddingEffect(false); viewModel.onAddEffect(kind) },
+            onCancel = { onAddingEffect(false) },
+        )
+    }
+
     LayerInspector(layer = layer, control = control, state = state, viewModel = viewModel)
-    StatusLine(text = describe(layer, state))
+    EffectContext(layer = layer, state = state, viewModel = viewModel)
+}
+
+/**
+ * Where this effect applies, and the way out — one row rather than a bar of its own.
+ *
+ * The status text between them is deliberately short and about the *effect*: it used to narrate a
+ * drawing gesture you were not making, on a panel that no longer has the tools to make it with.
+ */
+@Composable
+private fun EffectContext(
+    layer: Layer,
+    state: PerfectEditUiState,
+    viewModel: PerfectEditorViewModel,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ActionChip(label = "Area", onClick = viewModel::onOpenArea)
+        Text(
+            text = describe(layer, state),
+            color = Color(0xAAFFFFFF),
+            fontSize = 11.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        ActionChip(label = "Done", onClick = viewModel::onDeselectLayer)
+    }
 }
 
 /**
@@ -1099,11 +1151,12 @@ private fun ControlChips(
     controls: List<LayerControl>,
     control: LayerControl,
     viewModel: PerfectEditorViewModel,
+    modifier: Modifier = Modifier,
 ) {
     val items = chipItems(controls, control.group)
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 20.dp),
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(items, key = { it.key }) { item ->
@@ -1372,51 +1425,9 @@ private fun LayerInspector(
             )
         }
 
-        else -> {
-            ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
-            // The wheel reaches black and white in principle, but not transparent — and nobody
-            // should have to aim for an exact corner of a picker for the two colours captions are
-            // usually set in. The shortcuts ride with it rather than as a row of their own.
-            ColourTones(layer = layer, control = control, viewModel = viewModel)
-        }
-    }
-}
-
-/** The shortcuts beside the wheel: black, white, and — for a ramp — clear. */
-@Composable
-private fun ColourTones(layer: Layer, control: LayerControl, viewModel: PerfectEditorViewModel) {
-    when {
-        layer is Layer.Text && control == LayerControl.TextColour -> ChipRow(
-            // Clear is a gradient idea; invisible text is a bug report, not a choice.
-            items = ColourTone.entries.filter { it != ColourTone.Clear },
-            label = { it.label },
-            isSelected = { it == layer.colour.tone },
-            onSelect = { viewModel.onTextTone(layer.id, it) },
-        )
-
-        layer is Layer.Shape && control == LayerControl.TextColour -> ChipRow(
-            items = ColourTone.entries.filter { it != ColourTone.Clear },
-            label = { it.label },
-            isSelected = { it == layer.colour.tone },
-            onSelect = { viewModel.onShapeTone(layer.id, it) },
-        )
-
-        layer is Layer.Gradient &&
-            (control == LayerControl.ColourFrom || control == LayerControl.ColourTo) -> {
-            val atStart = control == LayerControl.ColourFrom
-            val colour = if (atStart) layer.from else layer.to
-            // Clear is a ramp idea — a fill of nothing is just a hidden layer. Solid used to ride
-            // along at the end of this row, which made turning a fill back into a gradient
-            // something you found by accident; it is a chip of its own now.
-            ChipRow(
-                items = ColourTone.entries.filter { !layer.solid || it != ColourTone.Clear },
-                label = { it.label },
-                isSelected = { it == colour.tone },
-                onSelect = { viewModel.onGradientTone(layer.id, atStart, it) },
-            )
-        }
-
-        else -> Unit
+        // The colour shortcuts used to be a chip row of their own under the wheel, which made a
+        // colour the only control in the editor that cost two rows. They are swatches beside it now.
+        else -> ControlSlider(layer = layer, control = control, state = state, viewModel = viewModel)
     }
 }
 
@@ -1486,6 +1497,14 @@ private fun ControlSlider(
                 colour = if (atStart) layer.from else layer.to,
                 onPick = { viewModel.onGradientColour(layer.id, atStart, it) },
                 onPicked = viewModel::commitLayerEdit,
+                // Clear is what lets a ramp fade into the photo rather than sitting over it. A
+                // fill of nothing is just a hidden layer, so a solid one isn't offered it.
+                tones = if (layer.solid) {
+                    listOf(ColourTone.Black, ColourTone.White)
+                } else {
+                    listOf(ColourTone.Black, ColourTone.White, ColourTone.Clear)
+                },
+                onTone = { viewModel.onGradientTone(layer.id, atStart, it) },
             )
         }
 
@@ -1509,6 +1528,9 @@ private fun ControlSlider(
             colour = layer.colour,
             onPick = { viewModel.onTextColour(layer.id, it) },
             onPicked = viewModel::commitLayerEdit,
+            // Clear is a gradient idea; invisible words are a bug report, not a choice.
+            tones = listOf(ColourTone.Black, ColourTone.White),
+            onTone = { viewModel.onTextTone(layer.id, it) },
         )
 
         control == LayerControl.SmoothAmount && layer is Layer.Smooth -> ValueSlider(
@@ -1546,6 +1568,8 @@ private fun ControlSlider(
             colour = layer.colour,
             onPick = { viewModel.onShapeColour(layer.id, it) },
             onPicked = viewModel::commitLayerEdit,
+            tones = listOf(ColourTone.Black, ColourTone.White),
+            onTone = { viewModel.onShapeTone(layer.id, it) },
         )
 
         control == LayerControl.Intensity && layer is Layer.Look -> ValueSlider(
@@ -1632,10 +1656,11 @@ private fun ToolBar(state: PerfectEditUiState, viewModel: PerfectEditorViewModel
 /**
  * The stack.
  *
- * Four buttons at most, all of them about the stack: add one, reach the rest, go and change where
- * this one applies, or put it down. Everything about *choosing* an area has moved to the panel that
- * is only about that — this row used to carry the wand's setting, Invert, Clear and Apply as well,
- * none of which are anything to do with the stack.
+ * The row with nothing selected: add an effect, reach the stack, or go and choose an area first.
+ *
+ * With an effect selected these three collapse into the ends of its control row, so the panel never
+ * spends a whole row on buttons. This one used to carry the wand's setting, Invert, Clear, Apply
+ * and Done as well, none of which have anything to do with the stack.
  */
 @Composable
 private fun StackBar(
@@ -1651,14 +1676,9 @@ private fun StackBar(
     ) {
         ActionChip(label = "+ Effect", emphasis = true, onClick = onAdd)
         LayersButton(state = state, onClick = onOpenLayers)
-        // Where this effect applies. One chip instead of the eight buttons that used to be on
-        // screen whether or not you were choosing an area.
+        // Drawing an area before choosing what goes in it is a real way to work, so it is offered
+        // here too — just not as eight buttons parked on top of everything else.
         ActionChip(label = "Area", onClick = viewModel::onOpenArea)
-        if (state.document.selected != null) {
-            // Putting the stack down. Without it the only way to stop editing a layer was to add
-            // another one, which is a strange thing to have to do to look at the photo.
-            ActionChip(label = "Done", onClick = viewModel::onDeselectLayer)
-        }
     }
 }
 
