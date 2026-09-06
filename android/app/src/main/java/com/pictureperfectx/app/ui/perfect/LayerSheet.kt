@@ -289,7 +289,10 @@ private fun Layer.summary(): String {
         is Layer.Heal -> "Heal"
     }
     val where = if (mask.isEmpty) "whole photo" else "masked"
-    return "$kind · $where · ${(opacity * 100).toInt()}%"
+    // Any layer can carry adjustments now, so a Look that has also been brightened should say so —
+    // otherwise the only way to find out is to select it and go looking through its chips.
+    val adjusted = if (adjustments.isNeutral) "" else " · adjusted"
+    return "$kind · $where · ${(opacity * 100).toInt()}%$adjusted"
 }
 
 /** How many cells across a thumbnail samples the mask. */

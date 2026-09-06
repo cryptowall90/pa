@@ -194,13 +194,26 @@ button, and a **tinted outline** is a setting that is on.
 > straightening re-orients the photo without moving the masks with it. Frame the photo before
 > masking it; doing it the other way round leaves the effect where the frame used to be.
 
-#### Tone
+#### Adjustments belong to the area, not to one effect
 
 **Exposure, contrast, blacks, shadows, highlights, whites, saturation, vibrance and warmth**, each
-−100…100, per layer and through any area. GPUImage's own highlight/shadow filter only lightens
-shadows and only darkens highlights, so `capture/GPUImageToneFilter.kt` is a custom one-pass shader
-that weights each adjustment by where a pixel sits in the luminance range — overlapping bands, so
-the controls blend rather than band at their edges.
+−100…100 — and carried by **every layer that changes the photo**, not just an adjustment layer. So a
+lassoed area with a filter in it can also be brightened, in place, without a second layer given the
+same area by hand. Text, shapes and gradients are left out: they draw their own content and have a
+colour wheel already.
+
+A **drawn area with nothing in it yet** shows them too. Moving a slider is what creates the layer,
+carrying that area — so you never have to know which effect happens to be the one that does
+exposure.
+
+It is free when untouched: `ToneAdjustments.isNeutral` and `capture/ImageToner.kt`'s early return
+mean a layer nobody has adjusted takes no GPU pass and allocates no bitmap, and defaults aren't
+serialized, so it adds nothing to a saved edit either.
+
+GPUImage's own highlight/shadow filter only lightens shadows and only darkens highlights, so
+`capture/GPUImageToneFilter.kt` is a custom one-pass shader that weights each adjustment by where a
+pixel sits in the luminance range — overlapping bands, so the controls blend rather than band at
+their edges.
 
 #### What CI can actually check
 
