@@ -74,6 +74,55 @@ class LayerControlTest {
     }
 
     @Test
+    fun `every layer that changes the photo can be adjusted`() {
+        // The point of the change: lasso the sky, put a filter in it, and brightening that same
+        // area is right there instead of needing a second layer given the area by hand.
+        listOf(
+            Layer.Look(id = 1, filterId = "fuji_provia"),
+            Layer.Curve(id = 2),
+            Layer.Smooth(id = 3),
+            Layer.Heal(id = 4),
+            Layer.Blur(id = 5),
+            Layer.Tone(id = 6),
+        ).forEach { layer ->
+            assertEquals(
+                "${layer.name} should offer every adjustment",
+                ToneBand.entries.toList(),
+                LayerControl.forLayer(layer).mapNotNull { it.band },
+            )
+        }
+    }
+
+    @Test
+    fun `a layer that draws its own content is not adjusted, it is coloured`() {
+        // Text, shapes and gradients have a colour wheel already. Exposure on them would only be a
+        // second way to set the same colour.
+        listOf(
+            Layer.Text(id = 1),
+            Layer.Shape(id = 2),
+            Layer.Gradient(id = 3),
+            Layer.Gradient(id = 4, solid = true),
+        ).forEach { layer ->
+            assertTrue(
+                "${layer.name} should offer no adjustments",
+                LayerControl.forLayer(layer).none { it.band != null },
+            )
+        }
+    }
+
+    @Test
+    fun `adjustments sit in the same place on every layer that has them`() {
+        // Right before Opacity, which is what keeps a Tone layer's row exactly as it was and every
+        // other layer's growing by two chips rather than eleven.
+        val look = LayerControl.forLayer(Layer.Look(id = 1, filterId = "x"))
+        assertEquals(
+            listOf(LayerControl.LookPick, LayerControl.Intensity),
+            look.takeWhile { it.band == null },
+        )
+        assertEquals(LayerControl.Opacity, look.last())
+    }
+
+    @Test
     fun `feathering is only offered when there is an edge to soften`() {
         assertFalse(LayerControl.Feather in LayerControl.forLayer(Layer.Tone(id = 1)))
         assertTrue(LayerControl.Feather in LayerControl.forLayer(Layer.Tone(id = 1, mask = area())))

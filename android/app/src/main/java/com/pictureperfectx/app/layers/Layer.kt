@@ -510,6 +510,19 @@ enum class ColourTone(val label: String) {
     Clear("Clear"),
 }
 
+/**
+ * Whether this layer changes the photo under it, as opposed to drawing its own content over it.
+ *
+ * The line adjustments are offered along. Brightening a filter, a smooth or a heal is the whole
+ * point; brightening a caption or a shape would only be a second way to set a colour its own wheel
+ * already sets. A flat Fill is a [Layer.Gradient] with `solid`, so it is covered here too.
+ */
+val Layer.altersPhoto: Boolean
+    get() = when (this) {
+        is Layer.Text, is Layer.Shape, is Layer.Gradient -> false
+        else -> true
+    }
+
 /** Copies a layer with new common properties, preserving its specific type and payload. */
 fun Layer.withCommon(
     id: Long = this.id,

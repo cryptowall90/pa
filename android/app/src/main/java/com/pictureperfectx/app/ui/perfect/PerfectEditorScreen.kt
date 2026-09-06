@@ -1475,7 +1475,9 @@ private fun ControlSlider(
 ) {
     val band = control.band
     when {
-        band != null && layer is Layer.Tone -> {
+        // Any layer, not only a Tone one. The guard that used to be here also hid a trap: a band
+        // chip on any other layer fell through to `else` and silently showed the opacity slider.
+        band != null -> {
             val value = layer.adjustments.valueOf(band)
             ValueSlider(
                 value = value.toFloat(),

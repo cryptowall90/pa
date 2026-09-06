@@ -45,6 +45,7 @@ import com.pictureperfectx.app.layers.MaskWand
 import com.pictureperfectx.app.layers.SelectionMode
 import com.pictureperfectx.app.layers.ShapeKind
 import com.pictureperfectx.app.layers.TextFont
+import com.pictureperfectx.app.layers.altersPhoto
 import com.pictureperfectx.app.layers.combinedWith
 import com.pictureperfectx.app.layers.sane
 import kotlin.math.abs
@@ -220,9 +221,9 @@ enum class LayerControl(
          */
         fun forLayer(layer: Layer): List<LayerControl> = buildList {
             when (layer) {
-                // Declaration order is the chip order, and taking the list straight from the enum
-                // means a band added to ToneAdjustments can't be left without a control.
-                is Layer.Tone -> addAll(entries.filter { it.band != null })
+                // A Tone layer *is* its adjustments, so it contributes nothing of its own — they
+                // are added below, along with every other layer's.
+                is Layer.Tone -> Unit
                 is Layer.Blur -> add(Blur)
                 is Layer.Gradient -> {
                     add(GradientSolid)
@@ -246,6 +247,14 @@ enum class LayerControl(
                 is Layer.Heal -> add(HealSize)
                 is Layer.Look -> { add(LookPick); add(Intensity) }
             }
+            // Exposure, contrast and colour, on any layer that changes the photo. Declaration order
+            // is the chip order, and taking the list straight from the enum means a band added to
+            // ToneAdjustments can't be left without a control. They collapse to two chips, Light and
+            // Color, so no layer's row grows by more than that.
+            //
+            // Not on Text, Shape or Gradient: those draw their own content and have a colour wheel
+            // already, so exposure on them would only be a second way to set the same colour.
+            if (layer.altersPhoto) addAll(entries.filter { it.band != null })
             add(Opacity)
             // Feathering an area that doesn't exist is a slider that does nothing.
             if (!layer.mask.isEmpty) add(Feather)
@@ -1068,21 +1077,20 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Edits what a layer actually *does*, as opposed to how it's composited.
+     * One adjustment, on any layer.
      *
-     * `withCommon` deliberately can't reach a layer's payload, so these go through
-     * [Document.update] directly. Without them a Tone layer stays neutral for its whole life and
-     * quietly renders nothing — which also makes the mask tools look broken, since masking a no-op
-     * layer changes nothing on screen.
+     * The rest of the functions below edit what a layer *does* as opposed to how it is composited,
+     * and go through [Document.update] because `withCommon` deliberately can't reach a payload.
+     * This one no longer belongs with them: adjustments are common to every layer now, so it is a
+     * [Document.setAdjustments] like an opacity or a blend, and it reaches a Look or a Smooth as
+     * readily as the Tone layer it used to be limited to.
      */
     fun onLayerToneChanged(id: Long, band: ToneBand, value: Int) {
-        val document = _state.value.document.update(id) { layer ->
-            if (layer is Layer.Tone) {
-                layer.copy(adjustments = layer.adjustments.with(band, value.coerceIn(-100, 100)))
-            } else {
-                layer
-            }
-        }
+        val layer = _state.value.document.layers.firstOrNull { it.id == id } ?: return
+        val document = _state.value.document.setAdjustments(
+            id = id,
+            adjustments = layer.adjustments.with(band, value.coerceIn(-100, 100)),
+        )
         applyDocument(document, record = false)
     }
 
