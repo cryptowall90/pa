@@ -121,6 +121,43 @@ class DocumentTest {
     }
 
     @Test
+    fun `adjustments reach every kind of layer, not just Tone`() {
+        // The point of the change: an area is the thing you adjust, so a filter, a smooth or a heal
+        // can be brightened in place instead of needing a second layer given the same area by hand.
+        val document = Document()
+            .add { Layer.Look(it, filterId = "fuji_provia", intensity = 80) }
+            .add { Layer.Smooth(it, amount = 70) }
+        val warmed = ToneAdjustments(exposure = 20, warmth = 15)
+
+        val look = document.setAdjustments(document.layers[0].id, warmed).layers[0]
+        assertEquals(warmed, look.adjustments)
+        assertTrue(look is Layer.Look)
+        assertEquals("the payload is untouched", 80, (look as Layer.Look).intensity)
+        assertEquals("and so is the filter", "fuji_provia", look.filterId)
+
+        assertEquals(
+            "a layer nobody adjusted stays neutral",
+            ToneAdjustments(),
+            document.setAdjustments(document.layers[0].id, warmed).layers[1].adjustments,
+        )
+    }
+
+    @Test
+    fun `common edits carry adjustments along with everything else`() {
+        // withCommon is the only path for common properties, so a kind it forgot would silently
+        // lose its adjustments the moment the layer was hidden or its opacity moved.
+        val adjusted = ToneAdjustments(contrast = 40)
+        val every = listOf(
+            Layer.Tone(1), Layer.Look(2, filterId = "x"), Layer.Blur(3), Layer.Text(4),
+            Layer.Heal(5), Layer.Smooth(6), Layer.Shape(7), Layer.Curve(8), Layer.Gradient(9),
+        )
+        every.forEach { layer ->
+            val kept = layer.withCommon(adjustments = adjusted).withCommon(opacity = 0.5f)
+            assertEquals("${layer.name} lost its adjustments", adjusted, kept.adjustments)
+        }
+    }
+
+    @Test
     fun `an empty mask covers everything`() {
         assertEquals(1f, Mask().coverageAt(0, 0), 0.0001f)
     }

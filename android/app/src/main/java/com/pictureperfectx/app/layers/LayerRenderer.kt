@@ -62,9 +62,22 @@ object LayerRenderer {
         val canvas = Canvas(result)
 
         layers.forEach { layer ->
-            val effect = runCatching { effectFor(context, result, layer) }
+            val payload = runCatching { effectFor(context, result, layer) }
                 .onFailure { Log.e(TAG, "Layer '${layer.name}' failed to render", it) }
-                .getOrNull() ?: return@forEach
+                .getOrNull()
+
+            // A layer that neither draws anything nor adjusts anything has nothing to composite.
+            // Null used to mean that on its own; now the adjustments have to be neutral too, or a
+            // Look with no lookup — or a Tone layer, whose payload is *always* null — would be
+            // dropped before its sliders were ever applied.
+            if (payload == null && layer.adjustments.isNeutral) return@forEach
+
+            // Adjustments come after the layer's own effect: brightening a *filtered* area is what
+            // anyone means by it. Untouched sliders cost nothing — ImageToner hands the same bitmap
+            // straight back — so this is free for every layer nobody has adjusted.
+            val effect = runCatching { ImageToner.apply(context, payload ?: result, layer.adjustments) }
+                .onFailure { Log.e(TAG, "Layer '${layer.name}' failed to adjust", it) }
+                .getOrNull() ?: payload ?: return@forEach
 
             val masked = applyMask(effect, layer.mask)
             compose(canvas, result, masked, layer)
@@ -121,7 +134,9 @@ object LayerRenderer {
 
     /** The layer's edit applied to the whole of [source]; the mask decides where it survives. */
     private fun effectFor(context: Context, source: Bitmap, layer: Layer): Bitmap? = when (layer) {
-        is Layer.Tone -> ImageToner.apply(context, source, layer.adjustments)
+        // Nothing of its own: a Tone layer *is* its adjustments, and those are applied to every
+        // layer by the shared pass in `render`. Doing it here as well would apply them twice.
+        is Layer.Tone -> null
 
         is Layer.Look -> {
             val filter = FilterCatalog.byId(context, layer.filterId)

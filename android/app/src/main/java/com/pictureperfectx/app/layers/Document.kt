@@ -1,5 +1,7 @@
 package com.pictureperfectx.app.layers
 
+import com.pictureperfectx.app.capture.ToneAdjustments
+
 /**
  * The layer stack for one photo, ordered **bottom-first** so index 0 sits nearest the original and
  * the last entry renders on top — the reverse of how a layers panel lists them.
@@ -69,6 +71,10 @@ data class Document(
     fun setBlend(id: Long, blend: BlendMode): Document = update(id) { it.withCommon(blend = blend) }
 
     fun setMask(id: Long, mask: Mask): Document = update(id) { it.withCommon(mask = mask) }
+
+    /** Exposure, contrast and colour — common to every layer, so this reaches any of them. */
+    fun setAdjustments(id: Long, adjustments: ToneAdjustments): Document =
+        update(id) { it.withCommon(adjustments = adjustments) }
 
     /** Moves a layer one step up (towards the top) or down, clamped at the ends. */
     fun move(id: Long, up: Boolean): Document {

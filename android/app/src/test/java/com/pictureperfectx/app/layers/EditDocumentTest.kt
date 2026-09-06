@@ -5,6 +5,7 @@ import com.pictureperfectx.app.capture.CropRect
 import com.pictureperfectx.app.capture.ImageGeometry
 import com.pictureperfectx.app.capture.ToneAdjustments
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -48,7 +49,16 @@ class EditDocumentTest {
     private fun everything(): Document {
         var document = Document()
         document = document.add { Layer.Tone(it, adjustments = ToneAdjustments(shadows = 25, warmth = -8)) }
-        document = document.add { Layer.Look(it, filterId = "kodak-gold", intensity = 62) }
+        // Adjustments are common to every layer now, so a non-Tone one carries them too — and that
+        // is the half of a layer most likely to be dropped by a serializer that forgot about it.
+        document = document.add {
+            Layer.Look(
+                it,
+                filterId = "kodak-gold",
+                intensity = 62,
+                adjustments = ToneAdjustments(exposure = 18, vibrance = -30),
+            )
+        }
         document = document.add { Layer.Blur(it, radius = 31) }
         document = document.add {
             Layer.Text(
@@ -89,6 +99,21 @@ class EditDocumentTest {
             )
         }
         return document
+    }
+
+    @Test
+    fun `a layer nobody adjusted writes no adjustments at all`() {
+        // The property that keeps every already-saved edit byte-identical: defaults aren't encoded,
+        // so giving all nine layer kinds a ToneAdjustments adds nothing to a file until a slider is
+        // actually moved.
+        val plain = Document().add { Layer.Blur(it, radius = 31) }
+        val json = EditDocument.encode(EditDocument(document = plain))
+        assertFalse("an untouched layer should cost no bytes", json.contains("adjustments"))
+
+        val adjusted = Document().add {
+            Layer.Blur(it, radius = 31, adjustments = ToneAdjustments(contrast = 12))
+        }
+        assertTrue(EditDocument.encode(EditDocument(document = adjusted)).contains("adjustments"))
     }
 
     @Test

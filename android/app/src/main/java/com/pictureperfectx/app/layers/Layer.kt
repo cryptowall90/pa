@@ -253,7 +253,21 @@ sealed interface Layer {
     val blend: BlendMode
     val mask: Mask
 
-    /** An adjustment applied through this layer's mask and blend mode. */
+    /**
+     * Exposure, contrast and colour, applied to whatever this layer produces.
+     *
+     * Common to every layer rather than owned by one kind of them, because the thing a person
+     * actually has is an *area*: lasso the sky, put a filter in it, and wanting that same area
+     * brighter is the next thing you want. It used to mean a second layer given the same area by
+     * hand — [Document.duplicate] exists for exactly that problem and cannot solve it, since it
+     * copies the effect along with the mask and a layer's kind can never change.
+     *
+     * Free when untouched. [ToneAdjustments.isNeutral] and `ImageToner`'s early return mean a
+     * layer nobody has adjusted costs no GPU pass and allocates no bitmap.
+     */
+    val adjustments: ToneAdjustments
+
+    /** Nothing but [adjustments], applied through this layer's mask and blend mode. */
     @Serializable
     @SerialName("tone")
     data class Tone(
@@ -263,7 +277,7 @@ sealed interface Layer {
         override val opacity: Float = 1f,
         override val blend: BlendMode = BlendMode.Normal,
         override val mask: Mask = Mask(),
-        val adjustments: ToneAdjustments = ToneAdjustments(),
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /** A named look from the filter catalog, applied at [intensity] through the mask. */
@@ -278,6 +292,8 @@ sealed interface Layer {
         override val mask: Mask = Mask(),
         val filterId: String,
         val intensity: Int = 100,
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /**
@@ -297,6 +313,8 @@ sealed interface Layer {
         override val blend: BlendMode = BlendMode.Normal,
         override val mask: Mask = Mask(),
         val radius: Int = 25,
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /**
@@ -325,6 +343,8 @@ sealed interface Layer {
         /** Black by default: it is what a caption is, and what most photographs are lighter than. */
         val colour: GradientColour = GradientColour(tone = ColourTone.Black),
         val font: TextFont = TextFont.Sans,
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /**
@@ -345,6 +365,8 @@ sealed interface Layer {
         override val blend: BlendMode = BlendMode.Normal,
         override val mask: Mask = Mask(),
         val dabs: List<HealDab> = emptyList(),
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /**
@@ -364,6 +386,8 @@ sealed interface Layer {
         override val blend: BlendMode = BlendMode.Normal,
         override val mask: Mask = Mask(),
         val amount: Int = 55,
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /**
@@ -389,6 +413,8 @@ sealed interface Layer {
         val colour: GradientColour = GradientColour(tone = ColourTone.White),
         /** Outline width as a fraction of the shorter edge; 0 fills the shape instead. */
         val stroke: Float = 0f,
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer {
         /** Where the sizing handle sits: the corner of the box, before any rotation. */
         val corner: MaskPoint
@@ -412,6 +438,8 @@ sealed interface Layer {
         override val blend: BlendMode = BlendMode.Normal,
         override val mask: Mask = Mask(),
         val spec: CurveSpec = CurveSpec(),
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 
     /**
@@ -441,6 +469,8 @@ sealed interface Layer {
          * they share a layer at all.
          */
         val solid: Boolean = false,
+        /** Exposure, contrast and colour, on top of what this layer does. Free when untouched. */
+        override val adjustments: ToneAdjustments = ToneAdjustments(),
     ) : Layer
 }
 
@@ -488,16 +518,17 @@ fun Layer.withCommon(
     opacity: Float = this.opacity,
     blend: BlendMode = this.blend,
     mask: Mask = this.mask,
+    adjustments: ToneAdjustments = this.adjustments,
 ): Layer = when (this) {
-    is Layer.Tone -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Look -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Blur -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Gradient -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Curve -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Text -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Shape -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Smooth -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
-    is Layer.Heal -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask)
+    is Layer.Tone -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Look -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Blur -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Gradient -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Curve -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Text -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Shape -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Smooth -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
+    is Layer.Heal -> copy(id = id, name = name, isVisible = isVisible, opacity = opacity, blend = blend, mask = mask, adjustments = adjustments)
 }
 
 /** A line has no inside, so it is always stroked whatever the stroke width says. */
