@@ -30,6 +30,8 @@ private val Brand = Color(0xFFFF4D6D)
  *
  * @param imageBounds where the image is actually drawn inside this composable (letterboxed by Fit).
  * @param lockedRatio pixel width/height the frame must keep, or null when dragging is unconstrained.
+ * @param interactive false shows the frame as a read-only reminder of a crop already set — dimmed
+ *   surround and outline only, no grips and no gestures, for when the crop controls are put away.
  */
 @Composable
 fun CropOverlay(
@@ -38,14 +40,18 @@ fun CropOverlay(
     lockedRatio: Float?,
     sourceRatio: Float,
     onCropChanged: (CropRect) -> Unit,
+    onCropCommitted: () -> Unit = {},
     modifier: Modifier = Modifier,
+    interactive: Boolean = true,
 ) {
     // The gesture block outlives recompositions, so reading `crop` directly would start each drag
     // from whatever the frame was when the block was created.
     val latestCrop by rememberUpdatedState(crop)
 
-    Canvas(
-        modifier = modifier.pointerInput(imageBounds, lockedRatio, sourceRatio) {
+    val gestures = if (!interactive) {
+        Modifier
+    } else {
+        Modifier.pointerInput(imageBounds, lockedRatio, sourceRatio) {
             if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@pointerInput
             var handle: Handle? = null
             var working = latestCrop
@@ -54,7 +60,7 @@ fun CropOverlay(
                     working = latestCrop
                     handle = handleAt(position, working.toScreen(imageBounds), lockedRatio != null)
                 },
-                onDragEnd = { handle = null },
+                onDragEnd = { handle = null; onCropCommitted() },
                 onDragCancel = { handle = null },
             ) { change, drag ->
                 change.consume()
@@ -64,8 +70,10 @@ fun CropOverlay(
                 working = resize(working, grabbed, dx, dy, lockedRatio, sourceRatio)
                 onCropChanged(working)
             }
-        },
-    ) {
+        }
+    }
+
+    Canvas(modifier = modifier.then(gestures)) {
         if (imageBounds.width <= 0f || imageBounds.height <= 0f) return@Canvas
         val frame = crop.toScreen(imageBounds)
 
@@ -88,6 +96,17 @@ fun CropOverlay(
             size = Size(imageBounds.right - frame.right, frame.height),
         )
 
+        drawRect(
+            color = Color.White,
+            topLeft = frame.topLeft,
+            size = Size(frame.width, frame.height),
+            style = Stroke(width = if (interactive) 1.5.dp.toPx() else 1.dp.toPx()),
+        )
+
+        // Guides and grips are drag affordances, so a read-only frame shows neither — they'd invite
+        // a drag that does nothing.
+        if (!interactive) return@Canvas
+
         // Rule of thirds.
         val thin = Stroke(width = 1.dp.toPx())
         for (i in 1..2) {
@@ -96,13 +115,6 @@ fun CropOverlay(
             drawLine(Color(0x66FFFFFF), Offset(x, frame.top), Offset(x, frame.bottom), thin.width)
             drawLine(Color(0x66FFFFFF), Offset(frame.left, y), Offset(frame.right, y), thin.width)
         }
-
-        drawRect(
-            color = Color.White,
-            topLeft = frame.topLeft,
-            size = Size(frame.width, frame.height),
-            style = Stroke(width = 1.5.dp.toPx()),
-        )
 
         // Corner grips, drawn inside the frame so they never leave the image.
         val arm = 20.dp.toPx()

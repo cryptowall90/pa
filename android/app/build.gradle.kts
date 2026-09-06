@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
 }
 
@@ -84,6 +85,9 @@ dependencies {
     implementation(libs.gpuimage)
     implementation(libs.accompanist.permissions)
     implementation(libs.coil.compose)
+
+    // Saved edits: a layer stack written to disk and read back
+    implementation(libs.kotlinx.serialization.json)
 
     // Room (photo metadata schema)
     implementation(libs.androidx.room.runtime)

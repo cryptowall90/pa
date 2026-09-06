@@ -124,9 +124,13 @@ private fun PhotoThumb(
 
 /** Corner marker identifying a capture that also wrote a DNG. */
 @Composable
-private fun RawBadge(modifier: Modifier = Modifier) {
+private fun RawBadge(modifier: Modifier = Modifier) = CornerBadge(text = "RAW", modifier = modifier)
+
+/** A small dark label in the corner of a thumbnail. */
+@Composable
+private fun CornerBadge(text: String, modifier: Modifier = Modifier) {
     Text(
-        text = "RAW",
+        text = text,
         color = Color.White,
         fontSize = 9.sp,
         fontWeight = FontWeight.Bold,
@@ -239,6 +243,14 @@ fun GalleryScreen(
                         PhotoThumb(photo = photo, modifier = Modifier.fillMaxSize())
                         if (photo.isRaw) {
                             RawBadge(modifier = Modifier.align(Alignment.BottomStart).padding(4.dp))
+                        }
+                        // Says this one still has its layers, so opening it means opening the edit
+                        // rather than starting again on flat pixels.
+                        if (photo.isEdited) {
+                            CornerBadge(
+                                text = "LAYERS",
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp),
+                            )
                         }
                         if (isSelected) {
                             Box(Modifier.fillMaxSize().background(Color(0x552B6CFF)))
