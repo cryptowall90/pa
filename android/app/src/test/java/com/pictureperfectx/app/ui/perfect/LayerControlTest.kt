@@ -215,10 +215,12 @@ class LayerControlTest {
             LayerControl.ToneSaturation,
             LayerControl.firstOf(controls, ControlGroup.Colour),
         )
+        // A layer that draws its own content rather than changing the photo. Blur used to stand
+        // here and no longer can: every photo-altering layer carries the adjustments now.
         assertEquals(
             "a layer with no grouped controls opens nothing",
             null,
-            LayerControl.firstOf(LayerControl.forLayer(Layer.Blur(id = 1)), ControlGroup.Light),
+            LayerControl.firstOf(LayerControl.forLayer(Layer.Text(id = 1)), ControlGroup.Light),
         )
     }
 }
