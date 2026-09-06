@@ -177,6 +177,34 @@ class LayerControlTest {
     }
 
     @Test
+    fun `a drawn area on its own offers the adjustments and nothing else`() {
+        // Before any effect has been chosen there is no opacity to set, no feather to soften and no
+        // payload to pick — only the question of how this area should look.
+        val controls = LayerControl.forSelection()
+        assertEquals(ToneBand.entries.toList(), controls.mapNotNull { it.band })
+        assertEquals(ToneBand.entries.size, controls.size)
+        assertEquals(
+            "which is two chips once the groups have closed",
+            listOf("Light", "Color"),
+            chipItems(controls, expanded = null).map { (it as ChipItem.Group).group.label },
+        )
+    }
+
+    @Test
+    fun `a bare area still shows something whatever was last selected`() {
+        // The control carries over from the layer you were just on, and most of them mean nothing
+        // without a layer — landing on one would leave the panel with a chip row and no slider.
+        val controls = LayerControl.forSelection()
+        assertEquals(LayerControl.ToneExposure, LayerControl.effective(controls, LayerControl.Opacity))
+        assertEquals(LayerControl.ToneExposure, LayerControl.effective(controls, LayerControl.LookPick))
+        assertEquals(
+            "and one that does mean something is left alone",
+            LayerControl.ToneWarmth,
+            LayerControl.effective(controls, LayerControl.ToneWarmth),
+        )
+    }
+
+    @Test
     fun `a group opens onto the first of its members`() {
         val controls = LayerControl.forLayer(Layer.Tone(id = 1))
         assertEquals(

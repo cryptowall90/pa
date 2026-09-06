@@ -1056,9 +1056,17 @@ private fun EffectsControls(
 ) {
     val layer = state.document.selected
 
-    // With nothing selected there is no effect to describe, so the panel says what to do rather
-    // than filling up with settings for a tool nobody reached for.
-    if (layer == null) {
+    // A drawn area with nothing in it yet stands in for a layer, so exposure and colour are simply
+    // there. You used to have to already know that "Tone" is the effect that does exposure before a
+    // shape you had drawn was worth anything.
+    //
+    // Deliberately the *same* rows as a real layer rather than a branch of their own: the first
+    // move of a slider is what creates the layer, and a slider in its own branch would be torn out
+    // of the tree at that moment, cancelling the drag that created it.
+    val pending = if (layer == null) state.selection?.let { Layer.Tone(id = 0L, mask = it) } else null
+    val subject = layer ?: pending
+
+    if (subject == null) {
         StackBar(
             state = state,
             viewModel = viewModel,
@@ -1081,7 +1089,8 @@ private fun EffectsControls(
         return
     }
 
-    val controls = LayerControl.forLayer(layer)
+    // Nothing but the adjustments until there is a layer: no other control means anything yet.
+    val controls = if (layer == null) LayerControl.forSelection() else LayerControl.forLayer(subject)
     val control = LayerControl.effective(controls, state.control)
 
     Row(
@@ -1091,7 +1100,7 @@ private fun EffectsControls(
         Spacer(modifier = Modifier.width(12.dp))
         ActionChip(label = "+", emphasis = true, onClick = { onAddingEffect(true) })
         ControlChips(
-            layer = layer,
+            layer = subject,
             controls = controls,
             control = control,
             viewModel = viewModel,
@@ -1108,8 +1117,8 @@ private fun EffectsControls(
         )
     }
 
-    LayerInspector(layer = layer, control = control, state = state, viewModel = viewModel)
-    EffectContext(layer = layer, state = state, viewModel = viewModel)
+    LayerInspector(layer = subject, control = control, state = state, viewModel = viewModel)
+    EffectContext(layer = subject, isPending = layer == null, state = state, viewModel = viewModel)
 }
 
 /**
@@ -1121,6 +1130,7 @@ private fun EffectsControls(
 @Composable
 private fun EffectContext(
     layer: Layer,
+    isPending: Boolean,
     state: PerfectEditUiState,
     viewModel: PerfectEditorViewModel,
 ) {
@@ -1131,14 +1141,20 @@ private fun EffectContext(
     ) {
         ActionChip(label = "Area", onClick = viewModel::onOpenArea)
         Text(
-            text = describe(layer, state),
+            text = if (isPending) {
+                "Adjusting the area you drew — moving a slider makes it a layer."
+            } else {
+                describe(layer, state)
+            },
             color = Color(0xAAFFFFFF),
             fontSize = 11.sp,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        ActionChip(label = "Done", onClick = viewModel::onDeselectLayer)
+        // Nothing to put down yet: the stand-in isn't in the stack, and Deselect on the area panel
+        // is what takes the shape back off.
+        if (!isPending) ActionChip(label = "Done", onClick = viewModel::onDeselectLayer)
     }
 }
 
@@ -1483,7 +1499,7 @@ private fun ControlSlider(
                 value = value.toFloat(),
                 range = -100f..100f,
                 readout = "$value",
-                onChange = { viewModel.onLayerToneChanged(layer.id, band, it.roundToInt()) },
+                onChange = { viewModel.onAdjustBand(band, it.roundToInt()) },
                 onChangeFinished = viewModel::commitLayerEdit,
             )
         }

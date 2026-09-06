@@ -278,6 +278,18 @@ enum class LayerControl(
         /** The chip a group opens onto, which is simply the first of its members on offer. */
         fun firstOf(controls: List<LayerControl>, group: ControlGroup): LayerControl? =
             controls.firstOrNull { it.group == group }
+
+        /**
+         * What a drawn area offers before any effect has been chosen for it.
+         *
+         * Just the adjustments — two chips, once the groups have collapsed. Nothing else means
+         * anything without a layer to mean it about, and this is the answer to having to already
+         * know that "Tone" is the effect that does exposure before you can touch a slider.
+         */
+        fun forSelection(): List<LayerControl> = entries.filter { it.band != null }
+
+        /** The chip that shows one band's slider. */
+        fun forBand(band: ToneBand): LayerControl = entries.first { it.band == band }
     }
 }
 
@@ -1077,11 +1089,39 @@ class PerfectEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * One adjustment, on any layer.
+     * One adjustment, whether or not there is a layer yet.
      *
-     * The rest of the functions below edit what a layer *does* as opposed to how it is composited,
-     * and go through [Document.update] because `withCommon` deliberately can't reach a payload.
-     * This one no longer belongs with them: adjustments are common to every layer now, so it is a
+     * With an area drawn and nothing chosen for it, the first slider move is what creates the
+     * layer — carrying that area, neutral apart from the band being moved. Tapping a group and
+     * moving nothing creates nothing, so the stack still only grows when something is asked of it.
+     */
+    fun onAdjustBand(band: ToneBand, value: Int) {
+        val state = _state.value
+        state.document.selected?.let { return onLayerToneChanged(it.id, band, value) }
+
+        val drawn = state.selection ?: return
+        val ordinal = state.document.layers.size + 1
+        val document = state.document.add {
+            Layer.Tone(
+                id = it,
+                name = "$ordinal · ${EffectKind.Tone.label}",
+                mask = drawn,
+                adjustments = ToneAdjustments().with(band, value.coerceIn(-100, 100)),
+            )
+        }
+        // The area is spent: it is this layer's now, and leaving it floating would hand the same
+        // one to the next effect out of nowhere.
+        _state.update { it.copy(selection = null, control = LayerControl.forBand(band)) }
+        // Unrecorded, so the whole drag is one undo step when the slider's gesture ends.
+        applyDocument(document, record = false)
+    }
+
+    /**
+     * One adjustment, on a layer that already exists.
+     *
+     * The functions below edit what a layer *does* as opposed to how it is composited, and go
+     * through [Document.update] because `withCommon` deliberately can't reach a payload. This one
+     * no longer belongs with them: adjustments are common to every layer now, so it is a
      * [Document.setAdjustments] like an opacity or a blend, and it reaches a Look or a Smooth as
      * readily as the Tone layer it used to be limited to.
      */
